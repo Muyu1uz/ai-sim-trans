@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: ai-sim-trans
+
+simtrans:
+  audio:
+    provider: windows-wasapi
+    device-name:
+    sample-rate: 16000
+    channels: 1
+    chunk-samples: 512
+    queue-capacity: 100
+    native-library: LiveTranslateAudio
+
+  asr:
+    provider: dashscope
+    base-url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+    api-key: ${DASHSCOPE_API_KEY:}
+    model: qwen-asr-realtime
+    language: auto
+    turn-detection: server_vad
+
+  translation:
+    provider: openai-compatible
+    base-url: ${TRANSLATION_BASE_URL:http://localhost:11434/v1}
+    api-key: ${TRANSLATION_API_KEY:}
+    model: ${TRANSLATION_MODEL:qwen2.5:7b}
+    target-language: zh-CN
+    stream: true
+    context-segments: 0
+    temperature: 0.2
+    timeout: 45s
+
+  subtitle:
+    max-lines: 2
+    show-source: true
+    opacity: 0.86
+    font-size: 28
