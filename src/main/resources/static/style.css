@@ -1,0 +1,136 @@
+:root {
+  --paper: rgba(244, 245, 239, 0.88);
+  --ink: #161712;
+  --muted: #68706a;
+  --line: rgba(22, 23, 18, 0.16);
+  --accent: #d7482f;
+  --deep: #123d3b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  background:
+    linear-gradient(135deg, rgba(18, 61, 59, 0.86), rgba(22, 23, 18, 0.94)),
+    radial-gradient(circle at 80% 20%, rgba(215, 72, 47, 0.34), transparent 34%);
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 24px;
+  gap: 22px;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 18px;
+  border-bottom: 1px solid rgba(244, 245, 239, 0.28);
+  padding-bottom: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: rgba(244, 245, 239, 0.72);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+h1 {
+  margin: 0;
+  color: #f7f4e8;
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 18px;
+  background: var(--accent);
+  color: #fff8ef;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  border-color: rgba(244, 245, 239, 0.34);
+}
+
+.status {
+  min-width: 150px;
+  margin: 0;
+  color: rgba(244, 245, 239, 0.74);
+  text-align: right;
+  font-size: 13px;
+}
+
+.subtitle-stage {
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  padding-bottom: 7vh;
+}
+
+.subtitle-list {
+  width: min(1100px, 96vw);
+  display: grid;
+  gap: 10px;
+}
+
+.line {
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.24);
+  padding: 16px 18px 15px;
+  backdrop-filter: blur(12px);
+}
+
+.source {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.translation {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(24px, 3vw, 38px);
+  line-height: 1.22;
+  font-weight: 680;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 16px;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .status {
+    text-align: left;
+  }
+}
