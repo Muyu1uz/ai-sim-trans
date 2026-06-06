@@ -1,5 +1,10 @@
 HELP.md
 target/
+.venv-asr/
+models/
+LiveTranslateAudio.dll
+__pycache__/
+*.pyc
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
