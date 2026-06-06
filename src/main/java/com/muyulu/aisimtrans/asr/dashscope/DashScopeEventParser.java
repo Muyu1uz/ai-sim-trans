@@ -28,17 +28,18 @@ public class DashScopeEventParser {
             String normalized = eventName.toLowerCase(Locale.ROOT);
             String segmentId = text(root, "segment_id")
                     .or(() -> text(root, "sentence_id"))
-                    .or(() -> text(root, "id"))
                     .or(() -> text(root, "item_id"))
+                    .or(() -> text(root, "id"))
                     .orElseGet(() -> UUID.nameUUIDFromBytes(payload.getBytes()).toString());
-            String translationText = findTranslationText(root).orElse("");
-            String text = translationText.isBlank()
-                    ? findEventText(normalized, root).orElse("")
-                    : translationText;
+            Optional<String> translationText = findTranslationText(root);
+            boolean translationEvent = translationText.isPresent() || isTranslationEvent(normalized);
+            String text = translationEvent
+                    ? translationText.or(() -> findEventText(normalized, root)).orElse("")
+                    : findEventText(normalized, root).orElse("");
 
-            AsrEventType type = translationText.isBlank()
-                    ? classify(normalized, root, text)
-                    : AsrEventType.TRANSLATION_RESULT;
+            AsrEventType type = translationEvent
+                    ? text.isBlank() ? null : AsrEventType.TRANSLATION_RESULT
+                    : classify(normalized, root, text);
             if (type == null) {
                 return Optional.empty();
             }
@@ -78,6 +79,11 @@ public class DashScopeEventParser {
             return text.isBlank() ? null : AsrEventType.PARTIAL;
         }
         return text.isBlank() ? null : AsrEventType.PARTIAL;
+    }
+
+    private boolean isTranslationEvent(String eventName) {
+        return eventName.contains("translation")
+                || eventName.startsWith("response.text.");
     }
 
     private Optional<String> findEventText(String eventName, JsonNode root) {
