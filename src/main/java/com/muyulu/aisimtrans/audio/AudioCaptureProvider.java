@@ -10,4 +10,16 @@ public interface AudioCaptureProvider {
     boolean isRunning();
 
     List<String> listOutputDevices();
+
+    default double lastRms() {
+        return 0.0;
+    }
+
+    default long lastAudioAtMillis() {
+        return 0;
+    }
+
+    default long audioCallbackCount() {
+        return 0;
+    }
 }
