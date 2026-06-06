@@ -1,8 +1,13 @@
+server:
+  port: 8086
+
 spring:
   application:
     name: ai-sim-trans
 
 simtrans:
+  mode: ${SIMTRANS_MODE:local-asr}
+
   audio:
     provider: windows-wasapi
     device-name:
@@ -16,15 +21,42 @@ simtrans:
     provider: dashscope
     base-url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
     api-key: ${DASHSCOPE_API_KEY:}
-    model: qwen-asr-realtime
+    model: qwen3.5-livetranslate-flash-realtime
     language: auto
     turn-detection: server_vad
+    silence-duration-ms: 700
+    prefix-padding-ms: 300
+    threshold: 0.5
+
+  vad:
+    provider: ${VAD_PROVIDER:silero}
+    min-speech-ms: 1000
+    min-silence-ms: 400
+    max-speech-ms: 8000
+    threshold: 0.5
+    energy-threshold: 0.006
+    speech-density-threshold: 0.25
+    incremental-asr: true
+    interim-interval-ms: 1000
+    silero-model: models/vad/silero/silero_vad.onnx
+
+  local-asr:
+    engine: ${LOCAL_ASR_ENGINE:faster-whisper}
+    model-id: ${LOCAL_ASR_MODEL:Systran/faster-whisper-small}
+    models-dir: ${LOCAL_ASR_MODELS_DIR:models}
+    download-source: ${LOCAL_ASR_DOWNLOAD_SOURCE:modelscope}
+    device: ${LOCAL_ASR_DEVICE:cpu}
+    compute-type: ${LOCAL_ASR_COMPUTE_TYPE:int8}
+    python: ${LOCAL_ASR_PYTHON:py}
+    service-port: ${LOCAL_ASR_SERVICE_PORT:18765}
+    startup-timeout: 120s
+    model-timeout: 2h
 
   translation:
     provider: openai-compatible
-    base-url: ${TRANSLATION_BASE_URL:http://localhost:11434/v1}
-    api-key: ${TRANSLATION_API_KEY:}
-    model: ${TRANSLATION_MODEL:qwen2.5:7b}
+    base-url: ${TRANSLATION_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    api-key: ${TRANSLATION_API_KEY:${DASHSCOPE_API_KEY:}}
+    model: ${TRANSLATION_MODEL:qwen-turbo}
     target-language: zh-CN
     stream: true
     context-segments: 0

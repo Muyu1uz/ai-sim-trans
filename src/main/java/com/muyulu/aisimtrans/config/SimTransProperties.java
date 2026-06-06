@@ -6,8 +6,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "simtrans")
 public record SimTransProperties(
+        String mode,
         Audio audio,
         Asr asr,
+        Vad vad,
+        LocalAsr localAsr,
         Translation translation,
         Subtitle subtitle
 ) {
@@ -32,6 +35,34 @@ public record SimTransProperties(
             int silenceDurationMs,
             int prefixPaddingMs,
             double threshold
+    ) {
+    }
+
+    public record Vad(
+            String provider,
+            int minSpeechMs,
+            int minSilenceMs,
+            int maxSpeechMs,
+            double threshold,
+            double energyThreshold,
+            double speechDensityThreshold,
+            boolean incrementalAsr,
+            int interimIntervalMs,
+            String sileroModel
+    ) {
+    }
+
+    public record LocalAsr(
+            String engine,
+            String modelId,
+            String modelsDir,
+            String downloadSource,
+            String device,
+            String computeType,
+            String python,
+            int servicePort,
+            Duration startupTimeout,
+            Duration modelTimeout
     ) {
     }
 
