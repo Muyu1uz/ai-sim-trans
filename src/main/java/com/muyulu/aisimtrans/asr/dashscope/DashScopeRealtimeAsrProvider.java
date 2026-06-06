@@ -20,6 +20,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -31,7 +34,10 @@ import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
 
 @Component
+@Qualifier("dashScopeAsrProvider")
 public class DashScopeRealtimeAsrProvider implements AsrProvider {
+    private static final Logger log = LoggerFactory.getLogger(DashScopeRealtimeAsrProvider.class);
+
     private final SimTransProperties properties;
     private final ObjectMapper objectMapper;
     private final DashScopeEventParser eventParser;
@@ -53,6 +59,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
     @Override
     public void start(AudioFrameQueue audioQueue, Consumer<AsrEvent> eventConsumer) {
         if (!running.compareAndSet(false, true)) {
+            log.info("DashScope ASR 已在运行，忽略重复启动");
             return;
         }
         if (properties.asr().apiKey() == null || properties.asr().apiKey().isBlank()) {
@@ -60,6 +67,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
             throw new AsrException("DASHSCOPE_API_KEY is required for DashScope ASR.");
         }
         try {
+            log.info("开始启动 DashScope realtime ASR，模型={}，地址={}", properties.asr().model(), properties.asr().baseUrl());
             CountDownLatch sessionReady = new CountDownLatch(1);
             AtomicReference<String> startupError = new AtomicReference<>();
             webSocket = HttpClient.newBuilder()
@@ -71,6 +79,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
                     .buildAsync(asrWebSocketUri(), new Listener(eventConsumer, sessionReady, startupError))
                     .join();
             webSocket.sendText(sessionUpdateJson(), true).join();
+            log.info("DashScope session.update 已发送");
             if (!sessionReady.await(5, TimeUnit.SECONDS)) {
                 throw new AsrException("DashScope ASR session.update timed out.");
             }
@@ -78,15 +87,19 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
                 throw new AsrException("DashScope ASR session.update failed: " + startupError.get());
             }
             senderTask = senderExecutor.submit(() -> sendAudioLoop(audioQueue, eventConsumer));
+            log.info("DashScope realtime ASR 启动成功");
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             running.set(false);
+            log.error("启动 DashScope ASR 时被中断", ex);
             throw new AsrException("Interrupted while starting DashScope ASR WebSocket.", ex);
         } catch (AsrException ex) {
             running.set(false);
+            log.error("启动 DashScope ASR 失败：{}", ex.getMessage(), ex);
             throw ex;
         } catch (RuntimeException ex) {
             running.set(false);
+            log.error("启动 DashScope ASR 失败：{}", ex.getMessage(), ex);
             throw new AsrException(startFailureMessage(ex), ex);
         }
     }
@@ -96,6 +109,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
         if (!running.compareAndSet(true, false)) {
             return;
         }
+        log.info("开始停止 DashScope realtime ASR");
         Future<?> task = senderTask;
         if (task != null) {
             task.cancel(true);
@@ -105,6 +119,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
             socket.sendText("{\"type\":\"session.finish\"}", true)
                     .thenRun(() -> socket.sendClose(WebSocket.NORMAL_CLOSURE, "stop"));
         }
+        log.info("DashScope realtime ASR 停止请求已发送");
     }
 
     @Override
@@ -220,6 +235,7 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
 
         @Override
         public void onOpen(WebSocket webSocket) {
+            log.info("DashScope WebSocket 已连接");
             webSocket.request(1);
         }
 
@@ -257,9 +273,11 @@ public class DashScopeRealtimeAsrProvider implements AsrProvider {
             try {
                 String type = objectMapper.readTree(payload).path("type").asText();
                 if ("session.updated".equals(type)) {
+                    log.info("DashScope session.updated 已收到");
                     sessionReady.countDown();
                 }
                 if ("error".equals(type)) {
+                    log.error("DashScope 启动阶段返回错误：{}", payload);
                     startupError.compareAndSet(null, payload);
                     sessionReady.countDown();
                 }
