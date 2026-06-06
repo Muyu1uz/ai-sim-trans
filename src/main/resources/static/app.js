@@ -1,12 +1,42 @@
 const statusEl = document.getElementById("status");
+const modelStatusEl = document.getElementById("modelStatus");
 const listEl = document.getElementById("subtitleList");
 const lines = new Map();
+const MAX_SUBTITLE_LINES = 80;
+
+const controls = {
+  mode: document.getElementById("modeSelect"),
+  audioDevice: document.getElementById("audioDeviceSelect"),
+  asrEngine: document.getElementById("asrEngineSelect"),
+  asrModel: document.getElementById("asrModelInput"),
+  vad: document.getElementById("vadSelect"),
+  device: document.getElementById("deviceSelect"),
+  translationModel: document.getElementById("translationModelInput"),
+  translationBaseUrl: document.getElementById("translationBaseUrlInput"),
+};
+
+let defaultModels = {};
+let cloudLineIndex = 0;
+let cloudActiveLineId = "live-0";
+let cloudLineClosed = false;
+let lastCompletedCloudLine = { source: "", translation: "" };
+
+const modeLabels = {
+  "local-asr": "\u672c\u5730 ASR",
+  "dashscope-livetranslate": "DashScope \u4e91\u7aef\u540c\u4f20",
+};
+
+const vadLabels = {
+  silero: "Silero VAD",
+  energy: "Energy VAD",
+  disabled: "\u7981\u7528 VAD",
+};
 
 function connect() {
   const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/subtitles`);
-  socket.addEventListener("open", () => statusEl.textContent = "connected");
+  socket.addEventListener("open", () => statusEl.textContent = "\u5df2\u8fde\u63a5");
   socket.addEventListener("close", () => {
-    statusEl.textContent = "reconnecting";
+    statusEl.textContent = "\u6b63\u5728\u91cd\u8fde";
     setTimeout(connect, 1200);
   });
   socket.addEventListener("message", event => handleEvent(JSON.parse(event.data)));
@@ -18,11 +48,23 @@ function handleEvent(event) {
     return;
   }
 
-  const id = event.segmentId || "current";
-  const sourceText = event.sourceText || "";
-  const translationText = event.translationText || event.delta || "";
+  const cloudMode = controls.mode.value === "dashscope-livetranslate";
+  let sourceText = normalizeSubtitleText(event.sourceText || "");
+  let translationText = normalizeSubtitleText(event.translationText || "");
+  if (cloudMode && event.type && event.type.startsWith("TRANSLATION_")) {
+    sourceText = "";
+  }
+  if (cloudMode && event.type === "SOURCE_DELTA" && sourceText && isMostlyCjk(sourceText)) {
+    translationText = translationText || sourceText;
+    sourceText = "";
+  }
   if (!sourceText && !translationText) {
     return;
+  }
+  const previousCloudLineId = cloudActiveLineId;
+  const id = cloudMode ? cloudLineIdFor(event, sourceText, translationText) : event.segmentId || "current";
+  if (cloudMode && (id !== previousCloudLineId || isStaleCloudSourceWithNewTranslation(sourceText, translationText))) {
+    sourceText = removeStaleCloudSource(sourceText);
   }
 
   let row = lines.get(id);
@@ -34,24 +76,239 @@ function handleEvent(event) {
     listEl.appendChild(row);
   }
 
-  row.querySelector(".source").textContent = sourceText;
-  row.querySelector(".translation").textContent = translationText;
+  const sourceEl = row.querySelector(".source");
+  const translationEl = row.querySelector(".translation");
+  if (sourceText) {
+    sourceEl.textContent = sourceText;
+  }
+  if (translationText) {
+    translationEl.textContent = translationText;
+  }
 
-  while (listEl.children.length > 3) {
+  const hasTranslation = Boolean(translationEl.textContent.trim());
+  row.classList.toggle("source-only", !hasTranslation);
+  row.classList.toggle("has-translation", hasTranslation);
+  row.classList.toggle("is-final", event.type === "TRANSLATION_COMPLETED");
+  row.dataset.updatedAt = String(Date.now());
+
+  markCurrentLine(id);
+
+  while (listEl.children.length > MAX_SUBTITLE_LINES) {
     const first = listEl.firstElementChild;
     lines.delete([...lines.entries()].find(([, value]) => value === first)?.[0]);
     first.remove();
   }
+
+  if (cloudMode && event.type === "TRANSLATION_COMPLETED") {
+    cloudLineClosed = true;
+    lastCompletedCloudLine = {
+      source: sourceEl.textContent.trim(),
+      translation: translationEl.textContent.trim(),
+    };
+  }
+  scrollSubtitlesToBottom();
 }
 
+function normalizeSubtitleText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function cloudLineIdFor(event, sourceText, translationText) {
+  if (cloudLineClosed && event.type !== "TRANSLATION_COMPLETED") {
+    if (isSameCloudLineEcho(sourceText, translationText)) {
+      return cloudActiveLineId;
+    }
+    cloudLineIndex += 1;
+    cloudActiveLineId = `live-${cloudLineIndex}`;
+    cloudLineClosed = false;
+  }
+  return cloudActiveLineId;
+}
+
+function removeStaleCloudSource(sourceText) {
+  return sourceText && sourceText === lastCompletedCloudLine.source ? "" : sourceText;
+}
+
+function isSameCloudLineEcho(sourceText, translationText) {
+  if (translationText && translationText !== lastCompletedCloudLine.translation) {
+    return false;
+  }
+  return Boolean(
+    (sourceText && sourceText === lastCompletedCloudLine.source)
+      || (sourceText && sourceText === lastCompletedCloudLine.translation)
+      || (translationText && translationText === lastCompletedCloudLine.translation)
+  );
+}
+
+function isStaleCloudSourceWithNewTranslation(sourceText, translationText) {
+  return Boolean(
+    sourceText
+      && sourceText === lastCompletedCloudLine.source
+      && translationText
+      && translationText !== lastCompletedCloudLine.translation
+  );
+}
+
+function markCurrentLine(id) {
+  for (const [lineId, row] of lines.entries()) {
+    row.classList.toggle("is-current", lineId === id);
+  }
+}
+
+function scrollSubtitlesToBottom() {
+  listEl.scrollTop = listEl.scrollHeight;
+}
+
+function isMostlyCjk(value) {
+  const text = String(value || "").replace(/\s+/g, "");
+  if (!text) {
+    return false;
+  }
+  const cjk = text.match(/[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]/g) || [];
+  return cjk.length / text.length >= 0.45;
+}
+
+async function loadRuntimeOptions() {
+  const options = await fetchJson("/api/runtime/options");
+  const devices = await fetchJson("/api/audio/devices");
+  defaultModels = options.defaultModels || {};
+  fillSelect(controls.mode, options.modes || [], modeLabels);
+  fillAudioDevices(devices.value || devices || [], options.config?.audioDeviceName || "");
+  fillSelect(controls.asrEngine, options.asrEngines || []);
+  fillSelect(controls.vad, options.vadProviders || [], vadLabels);
+  applyRuntimeConfig(options.config);
+  setModelStatus(options.modelStatus, options.modelMessage);
+}
+
+function fillSelect(select, values, labels = {}) {
+  select.innerHTML = "";
+  values.forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = labels[value] || value;
+    select.appendChild(option);
+  });
+}
+
+function fillAudioDevices(devices, selected) {
+  controls.audioDevice.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "\u7cfb\u7edf\u9ed8\u8ba4\u8f93\u51fa";
+  controls.audioDevice.appendChild(defaultOption);
+  devices.forEach(device => {
+    const option = document.createElement("option");
+    option.value = device;
+    option.textContent = device;
+    controls.audioDevice.appendChild(option);
+  });
+  controls.audioDevice.value = selected || "";
+}
+
+function applyRuntimeConfig(config) {
+  controls.mode.value = config.mode;
+  controls.audioDevice.value = config.audioDeviceName || "";
+  controls.asrEngine.value = config.asrEngine;
+  controls.asrModel.value = config.asrModelId;
+  controls.vad.value = config.vadProvider;
+  controls.device.value = config.asrDevice;
+  controls.translationModel.value = config.translationModel;
+  controls.translationBaseUrl.value = config.translationBaseUrl;
+  applyModeState();
+}
+
+async function saveRuntimeConfig() {
+  const config = await fetchJson("/api/runtime/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(runtimePayload()),
+  });
+  applyRuntimeConfig(config);
+  statusEl.textContent = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58";
+}
+
+async function loadModel() {
+  await saveRuntimeConfig();
+  setModelStatus("loading", "\u6b63\u5728\u52a0\u8f7d\u6a21\u578b");
+  const status = await fetchJson("/api/runtime/model/load", { method: "POST" });
+  setModelStatus(status.status, status.message);
+}
+
+function runtimePayload() {
+  return {
+    mode: controls.mode.value,
+    audioDeviceName: controls.audioDevice.value,
+    asrEngine: controls.asrEngine.value,
+    asrModelId: controls.asrModel.value,
+    vadProvider: controls.vad.value,
+    asrDevice: controls.device.value,
+    translationModel: controls.translationModel.value,
+    translationBaseUrl: controls.translationBaseUrl.value,
+  };
+}
+
+function setModelStatus(status, message) {
+  modelStatusEl.dataset.state = status || "missing";
+  modelStatusEl.textContent = message || status || "\u6a21\u578b\u5c1a\u672a\u68c0\u67e5";
+}
+
+function applyModeState() {
+  const cloudMode = controls.mode.value === "dashscope-livetranslate";
+  document.querySelectorAll("[data-local-only]").forEach(group => {
+    group.classList.toggle("is-disabled", cloudMode);
+    group.querySelectorAll("input, select, button").forEach(element => {
+      element.disabled = cloudMode;
+    });
+  });
+  document.querySelectorAll("[data-local-control]").forEach(element => {
+    element.disabled = cloudMode;
+    element.classList.toggle("is-disabled", cloudMode);
+  });
+  if (cloudMode) {
+    setModelStatus("ready", "DashScope \u4e91\u7aef\u540c\u4f20\u6a21\u5f0f\u4e0d\u4f7f\u7528\u672c\u5730 ASR/VAD/\u7ffb\u8bd1\u6a21\u578b");
+  }
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+controls.asrEngine.addEventListener("change", () => {
+  controls.asrModel.value = defaultModels[controls.asrEngine.value] || controls.asrModel.value;
+});
+
+controls.mode.addEventListener("change", applyModeState);
+
+document.getElementById("saveRuntimeBtn").addEventListener("click", () => {
+  saveRuntimeConfig().catch(error => statusEl.textContent = error.message);
+});
+
+document.getElementById("loadModelBtn").addEventListener("click", () => {
+  loadModel().catch(error => setModelStatus("error", error.message));
+});
+
 document.getElementById("startBtn").addEventListener("click", async () => {
-  const response = await fetch("/api/pipeline/start", { method: "POST" });
-  statusEl.textContent = response.ok ? "starting" : "start failed";
+  try {
+    await saveRuntimeConfig();
+    const response = await fetch("/api/pipeline/start", { method: "POST" });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    statusEl.textContent = "\u6b63\u5728\u542f\u52a8";
+    await loadRuntimeOptions();
+  } catch (error) {
+    statusEl.textContent = error.message;
+  }
 });
 
 document.getElementById("stopBtn").addEventListener("click", async () => {
   const response = await fetch("/api/pipeline/stop", { method: "POST" });
-  statusEl.textContent = response.ok ? "stopped" : "stop failed";
+  statusEl.textContent = response.ok ? "\u5df2\u505c\u6b62" : "\u505c\u6b62\u5931\u8d25";
 });
 
+loadRuntimeOptions().catch(error => statusEl.textContent = error.message);
 connect();
