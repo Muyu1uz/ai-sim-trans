@@ -25,6 +25,9 @@ public class PipelineController {
 
     @PostMapping("/pipeline/start")
     public ResponseEntity<PipelineStatus> start() {
+        if (pipelineService.status().running()) {
+            pipelineService.stop();
+        }
         pipelineService.start();
         return ResponseEntity.ok(pipelineService.status());
     }

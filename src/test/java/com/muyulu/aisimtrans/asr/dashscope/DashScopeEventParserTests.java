@@ -35,34 +35,55 @@ class DashScopeEventParserTests {
     @Test
     void parsesLiveTranslateEvent() {
         var event = parser.parse("""
-                {"type":"response.translation_text.delta","item_id":"s3","delta":{"translation":"你好世界"}}
+                {"type":"response.translation_text.delta","item_id":"s3","delta":{"translation":"浣犲ソ涓栫晫"}}
                 """).orElseThrow();
 
         assertThat(event.type()).isEqualTo(AsrEventType.TRANSLATION_RESULT);
         assertThat(event.segmentId()).isEqualTo("s3");
-        assertThat(event.text()).isEqualTo("你好世界");
+        assertThat(event.text()).isEqualTo("浣犲ソ涓栫晫");
+    }
+
+    @Test
+    void prefersItemIdOverEventIdForLiveTranslateEvents() {
+        var event = parser.parse("""
+                {"type":"response.translation_text.delta","id":"event_1","item_id":"s3","delta":{"translation":"translated"}}
+                """).orElseThrow();
+
+        assertThat(event.type()).isEqualTo(AsrEventType.TRANSLATION_RESULT);
+        assertThat(event.segmentId()).isEqualTo("s3");
+    }
+
+    @Test
+    void parsesLiveTranslateTextDeltaAsTranslation() {
+        var event = parser.parse("""
+                {"type":"response.translation_text.delta","item_id":"s3","delta":{"text":"translated"}}
+                """).orElseThrow();
+
+        assertThat(event.type()).isEqualTo(AsrEventType.TRANSLATION_RESULT);
+        assertThat(event.segmentId()).isEqualTo("s3");
+        assertThat(event.text()).isEqualTo("translated");
     }
 
     @Test
     void parsesLiveTranslateResponseTextDoneEvent() {
         var event = parser.parse("""
-                {"type":"response.text.done","item_id":"s4","text":"你好世界"}
+                {"type":"response.text.done","item_id":"s4","text":"浣犲ソ涓栫晫"}
                 """).orElseThrow();
 
         assertThat(event.type()).isEqualTo(AsrEventType.TRANSLATION_RESULT);
         assertThat(event.segmentId()).isEqualTo("s4");
-        assertThat(event.text()).isEqualTo("你好世界");
+        assertThat(event.text()).isEqualTo("浣犲ソ涓栫晫");
     }
 
     @Test
     void parsesLiveTranslateIncrementalTextEvent() {
         var event = parser.parse("""
-                {"type":"response.text.text","item_id":"s5","text":"你好","stash":"世界"}
+                {"type":"response.text.text","item_id":"s5","text":"浣犲ソ","stash":"涓栫晫"}
                 """).orElseThrow();
 
         assertThat(event.type()).isEqualTo(AsrEventType.TRANSLATION_RESULT);
         assertThat(event.segmentId()).isEqualTo("s5");
-        assertThat(event.text()).isEqualTo("你好世界");
+        assertThat(event.text()).isEqualTo("浣犲ソ涓栫晫");
     }
     @Test
     void parsesLiveTranslateTranscriptEvent() {
