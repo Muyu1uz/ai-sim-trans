@@ -35,6 +35,10 @@ public class AudioFrameQueue {
         queue.clear();
     }
 
+    public void resetStats() {
+        droppedChunks.set(0);
+    }
+
     public int size() {
         return queue.size();
     }

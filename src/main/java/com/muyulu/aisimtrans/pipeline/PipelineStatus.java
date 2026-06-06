@@ -5,6 +5,9 @@ public record PipelineStatus(
         boolean captureRunning,
         boolean asrRunning,
         int queuedAudioChunks,
-        long droppedAudioChunks
+        long droppedAudioChunks,
+        double lastAudioRms,
+        long lastAudioAtMillis,
+        long audioCallbackCount
 ) {
 }

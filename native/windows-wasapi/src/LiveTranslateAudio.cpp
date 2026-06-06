@@ -183,7 +183,53 @@ ComPtr<IMMDevice> default_render_device() {
     return device;
 }
 
-void capture_loop(int targetSampleRate, int chunkSamples, AudioCallback callback, void* userData) {
+ComPtr<IMMDevice> render_device_by_name(const std::wstring& deviceName) {
+    if (deviceName.empty()) {
+        return default_render_device();
+    }
+
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+    if (FAILED(hr)) {
+        set_error(hresult_message(hr, L"CoCreateInstance(MMDeviceEnumerator) failed."));
+        return nullptr;
+    }
+
+    ComPtr<IMMDeviceCollection> devices;
+    hr = enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices);
+    if (FAILED(hr)) {
+        set_error(hresult_message(hr, L"EnumAudioEndpoints failed."));
+        return nullptr;
+    }
+
+    UINT count = 0;
+    devices->GetCount(&count);
+    for (UINT i = 0; i < count; ++i) {
+        ComPtr<IMMDevice> device;
+        if (FAILED(devices->Item(i, &device))) {
+            continue;
+        }
+        ComPtr<IPropertyStore> props;
+        if (FAILED(device->OpenPropertyStore(STGM_READ, &props))) {
+            continue;
+        }
+        PROPVARIANT name;
+        PropVariantInit(&name);
+        bool matched = false;
+        if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &name)) && name.vt == VT_LPWSTR) {
+            matched = deviceName == name.pwszVal;
+        }
+        PropVariantClear(&name);
+        if (matched) {
+            return device;
+        }
+    }
+
+    set_error(L"Output device not found: " + deviceName);
+    return nullptr;
+}
+
+void capture_loop(std::wstring deviceName, int targetSampleRate, int chunkSamples, AudioCallback callback, void* userData) {
     RunningFlagGuard runningGuard;
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
@@ -195,7 +241,7 @@ void capture_loop(int targetSampleRate, int chunkSamples, AudioCallback callback
     DWORD taskIndex = 0;
     avrtHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
 
-    ComPtr<IMMDevice> device = default_render_device();
+    ComPtr<IMMDevice> device = render_device_by_name(deviceName);
     if (!device) {
         CoUninitialize();
         return;
@@ -313,7 +359,7 @@ void capture_loop(int targetSampleRate, int chunkSamples, AudioCallback callback
 } // namespace
 
 extern "C" __declspec(dllexport) int __cdecl lt_start_capture(
-    const wchar_t*,
+    const wchar_t* deviceName,
     int targetSampleRate,
     int chunkSamples,
     AudioCallback callback,
@@ -335,7 +381,14 @@ extern "C" __declspec(dllexport) int __cdecl lt_start_capture(
     }
     g_lastError.clear();
     g_running = true;
-    g_thread = std::thread(capture_loop, targetSampleRate, chunkSamples, callback, userData);
+    g_thread = std::thread(
+        capture_loop,
+        deviceName == nullptr ? std::wstring() : std::wstring(deviceName),
+        targetSampleRate,
+        chunkSamples,
+        callback,
+        userData
+    );
     return 0;
 }
 
