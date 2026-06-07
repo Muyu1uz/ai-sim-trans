@@ -14,7 +14,7 @@ import com.muyulu.aisimtrans.audio.AudioCaptureProvider;
 import com.muyulu.aisimtrans.audio.AudioChunk;
 import com.muyulu.aisimtrans.audio.AudioChunkListener;
 import com.muyulu.aisimtrans.config.SimTransProperties;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.WString;

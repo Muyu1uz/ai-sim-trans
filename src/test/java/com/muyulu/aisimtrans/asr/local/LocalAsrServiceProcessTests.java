@@ -8,7 +8,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 import com.muyulu.aisimtrans.config.SimTransProperties;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 
 class LocalAsrServiceProcessTests {
     @Test

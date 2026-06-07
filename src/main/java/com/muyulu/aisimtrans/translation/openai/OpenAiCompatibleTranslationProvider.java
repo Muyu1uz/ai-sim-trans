@@ -11,7 +11,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import com.muyulu.aisimtrans.config.SimTransProperties;
 import com.muyulu.aisimtrans.runtime.RuntimeConfig;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.translation.TranslationDelta;
 import com.muyulu.aisimtrans.translation.TranslationMemory;
 import com.muyulu.aisimtrans.translation.TranslationProvider;

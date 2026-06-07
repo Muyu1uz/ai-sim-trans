@@ -20,7 +20,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.muyulu.aisimtrans.config.SimTransProperties;
 import com.muyulu.aisimtrans.runtime.ModelStatus;
 import com.muyulu.aisimtrans.runtime.RuntimeConfig;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 
 @Service
 public class LocalAsrModelManager {

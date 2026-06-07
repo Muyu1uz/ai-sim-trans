@@ -1,5 +1,6 @@
-package com.muyulu.aisimtrans.web;
+package com.muyulu.aisimtrans.config;
 
+import com.muyulu.aisimtrans.service.SubtitleWebSocketHandler;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;

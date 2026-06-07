@@ -34,7 +34,7 @@ import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
 import com.muyulu.aisimtrans.runtime.ModelStatus;
 import com.muyulu.aisimtrans.runtime.RuntimeConfig;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.vad.VadDetector;
 import com.muyulu.aisimtrans.vad.VadDetectorFactory;
 
