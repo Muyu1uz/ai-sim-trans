@@ -45,6 +45,7 @@ class AudioFrameQueueTests {
                 new SimTransProperties.Vad("energy", 250, 700, 8000, 0.5, 0.012, 0.25, true, 2000, "models/vad/silero/silero_vad.onnx"),
                 new SimTransProperties.LocalAsr("faster-whisper", "Systran/faster-whisper-large-v3", "models", "modelscope", "cuda", "float16", "py", 18765, Duration.ofSeconds(120), Duration.ofHours(2)),
                 new SimTransProperties.Translation("openai-compatible", "http://localhost:11434/v1", "", "model", "zh-CN", "", true, 12, 0.2, Duration.ofSeconds(45)),
+                new SimTransProperties.Correction(true, 4, 2, 0, 0.75, 2, Duration.ofSeconds(15)),
                 new SimTransProperties.Subtitle(2, true, 0.86, 28)
         );
     }

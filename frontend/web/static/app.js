@@ -1,8 +1,12 @@
 const statusEl = document.getElementById("status");
 const modelStatusEl = document.getElementById("modelStatus");
 const listEl = document.getElementById("subtitleList");
+const jumpBottomBtn = document.getElementById("jumpBottomBtn");
+const clearSubtitlesBtn = document.getElementById("clearSubtitlesBtn");
+const settingsPanel = document.getElementById("settingsPanel");
+const settingsBackdrop = document.getElementById("settingsBackdrop");
 const lines = new Map();
-const MAX_SUBTITLE_LINES = 80;
+const MAX_SUBTITLE_LINES = 500;
 
 const controls = {
   mode: document.getElementById("modeSelect"),
@@ -17,10 +21,7 @@ const controls = {
 };
 
 let defaultModels = {};
-let cloudLineIndex = 0;
-let cloudActiveLineId = "live-0";
-let cloudLineClosed = false;
-let lastCompletedCloudLine = { source: "", translation: "" };
+let followLatest = true;
 
 const modeLabels = {
   "local-asr": "\u672c\u5730 ASR",
@@ -52,21 +53,16 @@ function handleEvent(event) {
   const cloudMode = controls.mode.value === "dashscope-livetranslate";
   let sourceText = normalizeSubtitleText(event.sourceText || "");
   let translationText = normalizeSubtitleText(event.translationText || "");
-  if (cloudMode && event.type && event.type.startsWith("TRANSLATION_")) {
-    sourceText = "";
-  }
-  if (cloudMode && event.type === "SOURCE_DELTA" && sourceText && isMostlyCjk(sourceText)) {
-    translationText = translationText || sourceText;
+  if (cloudMode) {
+    if (!event.type || !event.type.startsWith("TRANSLATION_")) {
+      return;
+    }
     sourceText = "";
   }
   if (!sourceText && !translationText) {
     return;
   }
-  const previousCloudLineId = cloudActiveLineId;
-  const id = cloudMode ? cloudLineIdFor(event, sourceText, translationText) : event.segmentId || "current";
-  if (cloudMode && (id !== previousCloudLineId || isStaleCloudSourceWithNewTranslation(sourceText, translationText))) {
-    sourceText = removeStaleCloudSource(sourceText);
-  }
+  const id = event.segmentId || "current";
 
   let row = lines.get(id);
   if (!row) {
@@ -79,10 +75,10 @@ function handleEvent(event) {
 
   const sourceEl = row.querySelector(".source");
   const translationEl = row.querySelector(".translation");
-  if (sourceText) {
+  if (shouldApplySource(event, sourceText, cloudMode)) {
     sourceEl.textContent = sourceText;
   }
-  if (translationText) {
+  if (shouldApplyTranslation(event, translationText)) {
     translationEl.textContent = translationText;
   }
 
@@ -90,6 +86,10 @@ function handleEvent(event) {
   row.classList.toggle("source-only", !hasTranslation);
   row.classList.toggle("has-translation", hasTranslation);
   row.classList.toggle("is-final", event.type === "TRANSLATION_COMPLETED");
+  if (event.type === "CORRECTED") {
+    row.classList.add("is-corrected");
+    window.setTimeout(() => row.classList.remove("is-corrected"), 1400);
+  }
   row.dataset.updatedAt = String(Date.now());
 
   markCurrentLine(id);
@@ -100,54 +100,29 @@ function handleEvent(event) {
     first.remove();
   }
 
-  if (cloudMode && event.type === "TRANSLATION_COMPLETED") {
-    cloudLineClosed = true;
-    lastCompletedCloudLine = {
-      source: sourceEl.textContent.trim(),
-      translation: translationEl.textContent.trim(),
-    };
+  if (followLatest) {
+    scrollSubtitlesToBottom();
+  } else {
+    updateJumpBottomVisibility();
   }
-  scrollSubtitlesToBottom();
 }
 
 function normalizeSubtitleText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function cloudLineIdFor(event, sourceText, translationText) {
-  if (cloudLineClosed && event.type !== "TRANSLATION_COMPLETED") {
-    if (isSameCloudLineEcho(sourceText, translationText)) {
-      return cloudActiveLineId;
-    }
-    cloudLineIndex += 1;
-    cloudActiveLineId = `live-${cloudLineIndex}`;
-    cloudLineClosed = false;
+function shouldApplySource(event, sourceText, cloudMode) {
+  if (event.type === "SOURCE_DELTA" || event.type === "CORRECTED") {
+    return true;
   }
-  return cloudActiveLineId;
+  return !cloudMode && Boolean(sourceText);
 }
 
-function removeStaleCloudSource(sourceText) {
-  return sourceText && sourceText === lastCompletedCloudLine.source ? "" : sourceText;
-}
-
-function isSameCloudLineEcho(sourceText, translationText) {
-  if (translationText && translationText !== lastCompletedCloudLine.translation) {
-    return false;
+function shouldApplyTranslation(event, translationText) {
+  if (event.type === "SOURCE_DELTA" || event.type === "CORRECTED") {
+    return true;
   }
-  return Boolean(
-    (sourceText && sourceText === lastCompletedCloudLine.source)
-      || (sourceText && sourceText === lastCompletedCloudLine.translation)
-      || (translationText && translationText === lastCompletedCloudLine.translation)
-  );
-}
-
-function isStaleCloudSourceWithNewTranslation(sourceText, translationText) {
-  return Boolean(
-    sourceText
-      && sourceText === lastCompletedCloudLine.source
-      && translationText
-      && translationText !== lastCompletedCloudLine.translation
-  );
+  return Boolean(translationText);
 }
 
 function markCurrentLine(id) {
@@ -158,6 +133,37 @@ function markCurrentLine(id) {
 
 function scrollSubtitlesToBottom() {
   listEl.scrollTop = listEl.scrollHeight;
+  followLatest = true;
+  updateJumpBottomVisibility();
+}
+
+function updateFollowLatestState() {
+  const distanceFromBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
+  followLatest = distanceFromBottom < 32;
+  updateJumpBottomVisibility();
+}
+
+function updateJumpBottomVisibility() {
+  jumpBottomBtn.classList.toggle("is-visible", !followLatest);
+}
+
+function clearSubtitles() {
+  lines.clear();
+  listEl.replaceChildren();
+  followLatest = true;
+  updateJumpBottomVisibility();
+}
+
+function openSettings() {
+  settingsPanel.classList.add("is-open");
+  settingsPanel.setAttribute("aria-hidden", "false");
+  settingsBackdrop.hidden = false;
+}
+
+function closeSettings() {
+  settingsPanel.classList.remove("is-open");
+  settingsPanel.setAttribute("aria-hidden", "true");
+  settingsBackdrop.hidden = true;
 }
 
 function isMostlyCjk(value) {
@@ -288,6 +294,18 @@ controls.asrEngine.addEventListener("change", () => {
 });
 
 controls.mode.addEventListener("change", applyModeState);
+
+listEl.addEventListener("scroll", updateFollowLatestState);
+jumpBottomBtn.addEventListener("click", scrollSubtitlesToBottom);
+clearSubtitlesBtn.addEventListener("click", clearSubtitles);
+document.getElementById("settingsOpenBtn").addEventListener("click", openSettings);
+document.getElementById("settingsCloseBtn").addEventListener("click", closeSettings);
+settingsBackdrop.addEventListener("click", closeSettings);
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    closeSettings();
+  }
+});
 
 document.getElementById("saveRuntimeBtn").addEventListener("click", () => {
   saveRuntimeConfig().catch(error => statusEl.textContent = error.message);

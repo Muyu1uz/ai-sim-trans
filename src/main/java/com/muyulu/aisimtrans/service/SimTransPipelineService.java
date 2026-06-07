@@ -1,6 +1,10 @@
 package com.muyulu.aisimtrans.service;
 
 import java.util.Map;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +22,10 @@ import com.muyulu.aisimtrans.asr.AsrProvider;
 import com.muyulu.aisimtrans.audio.AudioCaptureProvider;
 import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
+import com.muyulu.aisimtrans.correction.CorrectionRequest;
+import com.muyulu.aisimtrans.correction.CorrectionResult;
+import com.muyulu.aisimtrans.correction.CorrectionReviewer;
+import com.muyulu.aisimtrans.correction.CorrectionSegment;
 import com.muyulu.aisimtrans.pipeline.PipelineStatus;
 import com.muyulu.aisimtrans.subtitle.SubtitleEvent;
 import com.muyulu.aisimtrans.subtitle.SubtitleEventPublisher;
@@ -35,17 +43,22 @@ public class SimTransPipelineService {
     private final AudioFrameQueue audioQueue;
     private final AsrProvider asrProvider;
     private final TranslationProvider translationProvider;
+    private final CorrectionReviewer correctionReviewer;
     private final SubtitleEventPublisher subtitlePublisher;
     private final RuntimeConfigService runtimeConfigService;
     private final ExecutorService translationExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ExecutorService correctionExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean correctionReviewRunning = new AtomicBoolean();
     private final AtomicLong asrEventCount = new AtomicLong();
     private final AtomicLong speechStartedCount = new AtomicLong();
     private final AtomicLong finalTranscriptCount = new AtomicLong();
     private final AtomicLong translationSubmittedCount = new AtomicLong();
     private final AtomicLong translationCompletedCount = new AtomicLong();
     private final Map<String, SegmentState> segments = new ConcurrentHashMap<>();
-    private final SegmentState liveTranslateState = new SegmentState("live");
+    private final Deque<String> completedSegmentIds = new ArrayDeque<>();
+    private final AtomicLong liveSegmentCounter = new AtomicLong();
+    private volatile SegmentState liveTranslateState = new SegmentState("live-0");
     private volatile boolean liveTranslationCompleted;
     private volatile String lastAsrEvent = "";
     private volatile String lastAsrText = "";
@@ -58,6 +71,7 @@ public class SimTransPipelineService {
             AudioFrameQueue audioQueue,
             AsrProvider asrProvider,
             TranslationProvider translationProvider,
+            CorrectionReviewer correctionReviewer,
             SubtitleEventPublisher subtitlePublisher,
             RuntimeConfigService runtimeConfigService
     ) {
@@ -66,6 +80,7 @@ public class SimTransPipelineService {
         this.audioQueue = audioQueue;
         this.asrProvider = asrProvider;
         this.translationProvider = translationProvider;
+        this.correctionReviewer = correctionReviewer;
         this.subtitlePublisher = subtitlePublisher;
         this.runtimeConfigService = runtimeConfigService;
     }
@@ -79,6 +94,7 @@ public class SimTransPipelineService {
             log.info("Starting pipeline, mode={}", runtimeConfigService.current().mode());
             audioQueue.clear();
             audioQueue.resetStats();
+            segments.clear();
             resetLiveTranslateState();
             audioCaptureProvider.start(audioQueue::offerLatest);
             asrProvider.start(audioQueue, this::handleAsrEvent);
@@ -101,6 +117,7 @@ public class SimTransPipelineService {
         asrProvider.stop();
         audioCaptureProvider.stop();
         audioQueue.clear();
+        segments.clear();
         resetLiveTranslateState();
         subtitlePublisher.publish(SubtitleEvent.status("pipeline stopped"));
         log.info("Pipeline stopped");
@@ -143,14 +160,13 @@ public class SimTransPipelineService {
         if (event.type() == AsrEventType.SPEECH_STARTED) {
             speechStartedCount.incrementAndGet();
             SegmentState state = stateFor(event);
-            subtitlePublisher.publish(new SubtitleEvent(
+            subtitlePublisher.publish(SubtitleEvent.of(
                     SubtitleEventType.CREATED,
                     state.segmentId,
                     "",
                     "",
                     null,
-                    System.currentTimeMillis(),
-                    null
+                    state.revision()
             ));
             return;
         }
@@ -179,14 +195,13 @@ public class SimTransPipelineService {
         SubtitleEventType sourceType = event.type() == AsrEventType.CORRECTION
                 ? SubtitleEventType.CORRECTED
                 : SubtitleEventType.SOURCE_DELTA;
-        subtitlePublisher.publish(new SubtitleEvent(
+        subtitlePublisher.publish(SubtitleEvent.of(
                 sourceType,
                 state.segmentId,
                 state.sourceText,
                 state.translationText,
                 event.text(),
-                System.currentTimeMillis(),
-                null
+                state.revision()
         ));
 
         if (isLiveTranslateModel() || event.type() == AsrEventType.PARTIAL) {
@@ -204,31 +219,21 @@ public class SimTransPipelineService {
 
     private void publishTranscriptEvent(AsrEvent event) {
         SegmentState state = stateFor(event);
-        if (isLiveTranslateModel() && isMostlyCjk(event.text()) && !isMostlyCjk(state.sourceText)) {
-            state.translationText = event.text();
-            subtitlePublisher.publish(new SubtitleEvent(
-                    subtitleTypeForCloudTranslation(event),
-                    state.segmentId,
-                    state.sourceText,
-                    state.translationText,
-                    event.text(),
-                    System.currentTimeMillis(),
-                    null
-            ));
+        if (isLiveTranslateModel() && isMostlyCjk(event.text())) {
             return;
         }
         state.sourceText = event.text();
         if (isLiveTranslateModel()) {
+            state.translationText = "";
             liveTranslationCompleted = false;
         }
-        subtitlePublisher.publish(new SubtitleEvent(
+        subtitlePublisher.publish(SubtitleEvent.of(
                 SubtitleEventType.SOURCE_DELTA,
                 state.segmentId,
                 state.sourceText,
                 state.translationText,
                 event.text(),
-                System.currentTimeMillis(),
-                null
+                state.revision()
         ));
     }
 
@@ -240,17 +245,18 @@ public class SimTransPipelineService {
         state.translationText = event.text();
         SubtitleEventType subtitleType = subtitleTypeForCloudTranslation(event);
         String sourceText = isLiveTranslateModel() ? "" : state.sourceText;
-        subtitlePublisher.publish(new SubtitleEvent(
+        subtitlePublisher.publish(SubtitleEvent.of(
                 subtitleType,
                 state.segmentId,
                 sourceText,
                 state.translationText,
                 event.text(),
-                System.currentTimeMillis(),
-                null
+                state.revision()
         ));
         if (subtitleType == SubtitleEventType.TRANSLATION_COMPLETED) {
             liveTranslationCompleted = true;
+            markCompleted(state.segmentId);
+            scheduleCorrectionReview();
         }
     }
 
@@ -287,33 +293,143 @@ public class SimTransPipelineService {
             state.translationText = completed;
             translationCompletedCount.incrementAndGet();
             lastTranslationText = completed;
-            subtitlePublisher.publish(new SubtitleEvent(
+            subtitlePublisher.publish(SubtitleEvent.of(
                     finalText ? SubtitleEventType.TRANSLATION_COMPLETED : SubtitleEventType.TRANSLATION_DELTA,
                     state.segmentId,
                     sourceText,
                     completed,
                     null,
-                    System.currentTimeMillis(),
-                    null
+                    state.revision()
             ));
+            if (finalText) {
+                markCompleted(state.segmentId);
+                scheduleCorrectionReview();
+            }
             return;
         }
         translated.append(delta.text());
         state.translationText = translated.toString();
-        subtitlePublisher.publish(new SubtitleEvent(
+        subtitlePublisher.publish(SubtitleEvent.of(
                 finalText && asrEventType == AsrEventType.CORRECTION ? SubtitleEventType.CORRECTED : SubtitleEventType.TRANSLATION_DELTA,
                 state.segmentId,
                 sourceText,
                 state.translationText,
                 delta.text(),
-                System.currentTimeMillis(),
-                null
+                state.revision()
         ));
+    }
+
+    private void markCompleted(String segmentId) {
+        synchronized (completedSegmentIds) {
+            completedSegmentIds.remove(segmentId);
+            completedSegmentIds.addLast(segmentId);
+            int maxSegments = Math.max(1, properties.correction().reviewWindowSegments() * 2);
+            while (completedSegmentIds.size() > maxSegments) {
+                completedSegmentIds.removeFirst();
+            }
+        }
+    }
+
+    private void scheduleCorrectionReview() {
+        if (!properties.correction().enabled()) {
+            return;
+        }
+        if (!correctionReviewRunning.compareAndSet(false, true)) {
+            return;
+        }
+        correctionExecutor.submit(() -> {
+            try {
+                int debounceMs = Math.max(0, properties.correction().debounceMs());
+                if (debounceMs > 0) {
+                    Thread.sleep(debounceMs);
+                }
+                reviewRecentSegments();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            } catch (RuntimeException ex) {
+                log.warn("Correction review failed: {}", ex.getMessage(), ex);
+            } finally {
+                correctionReviewRunning.set(false);
+            }
+        });
+    }
+
+    private void reviewRecentSegments() {
+        List<CorrectionSegment> snapshot = correctionSnapshot();
+        if (snapshot.size() < Math.max(1, properties.correction().minCompletedSegments())) {
+            return;
+        }
+        CorrectionRequest request = new CorrectionRequest(snapshot, properties.translation().targetLanguage());
+        List<CorrectionResult> results = correctionReviewer.review(request);
+        for (CorrectionResult result : results) {
+            applyCorrection(result);
+        }
+    }
+
+    private List<CorrectionSegment> correctionSnapshot() {
+        List<String> ids;
+        synchronized (completedSegmentIds) {
+            ids = new ArrayList<>(completedSegmentIds);
+        }
+        int window = Math.max(1, properties.correction().reviewWindowSegments());
+        int from = Math.max(0, ids.size() - window);
+        List<CorrectionSegment> snapshot = new ArrayList<>();
+        for (String id : ids.subList(from, ids.size())) {
+            SegmentState state = segments.get(id);
+            if (state == null) {
+                continue;
+            }
+            String sourceText = state.sourceText;
+            String translationText = state.translationText;
+            if ((sourceText == null || sourceText.isBlank()) && (translationText == null || translationText.isBlank())) {
+                continue;
+            }
+            snapshot.add(new CorrectionSegment(id, sourceText, translationText, state.revision()));
+        }
+        return snapshot;
+    }
+
+    private void applyCorrection(CorrectionResult result) {
+        if (result.confidence() < properties.correction().confidenceThreshold()) {
+            return;
+        }
+        SegmentState state = segments.get(result.segmentId());
+        if (state == null || !state.canCorrect(properties.correction().maxCorrectionsPerSegment())) {
+            return;
+        }
+        String sourceText = valueOrCurrent(result.sourceText(), state.sourceText);
+        String translationText = valueOrCurrent(result.translationText(), state.translationText);
+        if (sameText(sourceText, state.sourceText) && sameText(translationText, state.translationText)) {
+            return;
+        }
+        long revision = state.applyCorrection(sourceText, translationText);
+        lastTranslationText = translationText;
+        subtitlePublisher.publish(SubtitleEvent.of(
+                SubtitleEventType.CORRECTED,
+                state.segmentId,
+                state.sourceText,
+                state.translationText,
+                null,
+                revision
+        ));
+    }
+
+    private String valueOrCurrent(String value, String current) {
+        return value == null ? current : value.trim();
+    }
+
+    private boolean sameText(String left, String right) {
+        return (left == null ? "" : left).equals(right == null ? "" : right);
     }
 
     private SegmentState stateFor(AsrEvent event) {
         if (isLiveTranslateModel()
                 && (event.type() == AsrEventType.TRANSCRIPT_RESULT || event.type() == AsrEventType.TRANSLATION_RESULT)) {
+            if (liveTranslationCompleted && !isSameLiveTranslateEcho(event.text())) {
+                liveTranslateState = new SegmentState("live-" + liveSegmentCounter.incrementAndGet());
+                liveTranslationCompleted = false;
+            }
+            segments.putIfAbsent(liveTranslateState.segmentId, liveTranslateState);
             return liveTranslateState;
         }
         String id = event.segmentId() == null || event.segmentId().isBlank()
@@ -322,14 +438,25 @@ public class SimTransPipelineService {
         return segments.computeIfAbsent(id, SegmentState::new);
     }
 
+    private boolean isSameLiveTranslateEcho(String text) {
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        return text.equals(liveTranslateState.sourceText) || text.equals(liveTranslateState.translationText);
+    }
+
     private boolean isLiveTranslateModel() {
         return RuntimeConfigService.MODE_DASHSCOPE_LIVETRANSLATE.equals(runtimeConfigService.current().mode());
     }
 
     private void resetLiveTranslateState() {
-        liveTranslateState.sourceText = "";
-        liveTranslateState.translationText = "";
+        liveSegmentCounter.set(0);
+        liveTranslateState = new SegmentState("live-0");
+        segments.put(liveTranslateState.segmentId, liveTranslateState);
         liveTranslationCompleted = false;
+        synchronized (completedSegmentIds) {
+            completedSegmentIds.clear();
+        }
     }
 
     private SubtitleEventType subtitleTypeForCloudTranslation(AsrEvent event) {
@@ -378,8 +505,10 @@ public class SimTransPipelineService {
     private static final class SegmentState {
         private final String segmentId;
         private final AtomicLong translationVersion = new AtomicLong();
+        private final AtomicLong revision = new AtomicLong();
         private volatile String sourceText = "";
         private volatile String translationText = "";
+        private volatile int correctionCount;
 
         private SegmentState(String segmentId) {
             this.segmentId = segmentId;
@@ -391,6 +520,22 @@ public class SimTransPipelineService {
 
         private boolean isCurrentTranslation(long version) {
             return translationVersion.get() == version;
+        }
+
+        private long revision() {
+            return revision.get();
+        }
+
+        private boolean canCorrect(int maxCorrections) {
+            return maxCorrections <= 0 || correctionCount < maxCorrections;
+        }
+
+        private synchronized long applyCorrection(String sourceText, String translationText) {
+            this.sourceText = sourceText == null ? "" : sourceText;
+            this.translationText = translationText == null ? "" : translationText;
+            correctionCount++;
+            translationVersion.incrementAndGet();
+            return revision.incrementAndGet();
         }
     }
 }

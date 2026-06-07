@@ -64,6 +64,15 @@ simtrans:
     temperature: 0.2
     timeout: 45s
 
+  correction:
+    enabled: ${CORRECTION_ENABLED:true}
+    review-window-segments: 4
+    min-completed-segments: 2
+    debounce-ms: 500
+    confidence-threshold: 0.75
+    max-corrections-per-segment: 2
+    timeout: 15s
+
   subtitle:
     max-lines: 2
     show-source: true
