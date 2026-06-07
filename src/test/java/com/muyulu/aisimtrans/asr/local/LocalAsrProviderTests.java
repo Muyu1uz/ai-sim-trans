@@ -14,7 +14,7 @@ import com.muyulu.aisimtrans.asr.AsrException;
 import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
 import com.muyulu.aisimtrans.runtime.ModelStatus;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.vad.VadDetectorFactory;
 
 class LocalAsrProviderTests {

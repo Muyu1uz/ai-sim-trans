@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.muyulu.aisimtrans.config.SimTransProperties;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.subtitle.SubtitleEvent;
 import com.muyulu.aisimtrans.subtitle.SubtitleEventPublisher;
 

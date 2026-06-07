@@ -1,4 +1,4 @@
-package com.muyulu.aisimtrans.pipeline;
+package com.muyulu.aisimtrans.service;
 
 import java.util.Map;
 import java.util.UUID;
@@ -18,7 +18,7 @@ import com.muyulu.aisimtrans.asr.AsrProvider;
 import com.muyulu.aisimtrans.audio.AudioCaptureProvider;
 import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.pipeline.PipelineStatus;
 import com.muyulu.aisimtrans.subtitle.SubtitleEvent;
 import com.muyulu.aisimtrans.subtitle.SubtitleEventPublisher;
 import com.muyulu.aisimtrans.subtitle.SubtitleEventType;

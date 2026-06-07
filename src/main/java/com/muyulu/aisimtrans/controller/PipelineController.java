@@ -1,4 +1,4 @@
-package com.muyulu.aisimtrans.web;
+package com.muyulu.aisimtrans.controller;
 
 import java.util.List;
 
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.muyulu.aisimtrans.audio.AudioCaptureProvider;
 import com.muyulu.aisimtrans.pipeline.PipelineStatus;
-import com.muyulu.aisimtrans.pipeline.SimTransPipelineService;
+import com.muyulu.aisimtrans.service.SimTransPipelineService;
 
 @RestController
 @RequestMapping("/api")

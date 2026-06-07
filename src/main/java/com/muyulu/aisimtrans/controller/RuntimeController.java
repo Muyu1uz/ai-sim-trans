@@ -1,4 +1,4 @@
-package com.muyulu.aisimtrans.web;
+package com.muyulu.aisimtrans.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.muyulu.aisimtrans.asr.local.LocalAsrModelManager;
 import com.muyulu.aisimtrans.runtime.ModelStatus;
 import com.muyulu.aisimtrans.runtime.RuntimeConfig;
-import com.muyulu.aisimtrans.runtime.RuntimeConfigService;
+import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate;
 import com.muyulu.aisimtrans.runtime.RuntimeOptions;
 
