@@ -17,6 +17,9 @@ import com.muyulu.aisimtrans.audio.AudioCaptureProvider;
 import com.muyulu.aisimtrans.audio.AudioChunkListener;
 import com.muyulu.aisimtrans.audio.AudioFrameQueue;
 import com.muyulu.aisimtrans.config.SimTransProperties;
+import com.muyulu.aisimtrans.correction.CorrectionRequest;
+import com.muyulu.aisimtrans.correction.CorrectionResult;
+import com.muyulu.aisimtrans.correction.CorrectionReviewer;
 import com.muyulu.aisimtrans.service.RuntimeConfigService;
 import com.muyulu.aisimtrans.service.SimTransPipelineService;
 import com.muyulu.aisimtrans.subtitle.SubtitleEvent;
@@ -59,6 +62,59 @@ class SimTransPipelineServiceTests {
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_COMPLETED)
                 .extracting(SubtitleEvent::segmentId)
                 .contains("s1");
+    }
+
+    @Test
+    void publishesCorrectedEventWhenReviewUpdatesRecentCompletedSegment() throws Exception {
+        FakeAsrProvider asr = new FakeAsrProvider();
+        FakeTranslationProvider translation = new FakeTranslationProvider();
+        FakeCorrectionReviewer reviewer = new FakeCorrectionReviewer();
+        RecordingPublisher publisher = new RecordingPublisher();
+        SimTransProperties properties = properties("qwen-asr-realtime");
+        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
+        SimTransPipelineService service = service(properties, asr, translation, reviewer, publisher, runtimeConfigService);
+
+        reviewer.results = List.of(new CorrectionResult("s1", "hello world", "corrected translation", 0.9));
+
+        service.start();
+        asr.emit(new AsrEvent(AsrEventType.FINAL, "s1", "helo world", 1, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.FINAL, "s2", "next sentence", 2, "{}"));
+        Thread.sleep(300);
+
+        assertThat(reviewer.requests).isNotEmpty();
+        assertThat(publisher.events)
+                .filteredOn(event -> event.type() == SubtitleEventType.CORRECTED)
+                .extracting(SubtitleEvent::segmentId, SubtitleEvent::sourceText, SubtitleEvent::translationText)
+                .contains(org.assertj.core.groups.Tuple.tuple("s1", "hello world", "corrected translation"));
+        assertThat(publisher.events)
+                .filteredOn(event -> event.type() == SubtitleEventType.CORRECTED)
+                .extracting(SubtitleEvent::revision)
+                .contains(1L);
+    }
+
+    @Test
+    void ignoresLowConfidenceAndUnknownCorrectionResults() throws Exception {
+        FakeAsrProvider asr = new FakeAsrProvider();
+        FakeTranslationProvider translation = new FakeTranslationProvider();
+        FakeCorrectionReviewer reviewer = new FakeCorrectionReviewer();
+        RecordingPublisher publisher = new RecordingPublisher();
+        SimTransProperties properties = properties("qwen-asr-realtime");
+        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
+        SimTransPipelineService service = service(properties, asr, translation, reviewer, publisher, runtimeConfigService);
+
+        reviewer.results = List.of(
+                new CorrectionResult("s1", "low confidence", "low confidence translation", 0.2),
+                new CorrectionResult("missing", "unknown", "unknown translation", 0.95)
+        );
+
+        service.start();
+        asr.emit(new AsrEvent(AsrEventType.FINAL, "s1", "first", 1, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.FINAL, "s2", "second", 2, "{}"));
+        Thread.sleep(300);
+
+        assertThat(publisher.events)
+                .filteredOn(event -> event.type() == SubtitleEventType.CORRECTED)
+                .isEmpty();
     }
 
     @Test
@@ -111,7 +167,7 @@ class SimTransPipelineServiceTests {
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
                 .extracting(SubtitleEvent::segmentId)
-                .contains("live");
+                .contains("live-0");
     }
 
     @Test
@@ -130,13 +186,13 @@ class SimTransPipelineServiceTests {
 
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
-                .filteredOn(event -> "live".equals(event.segmentId()))
+                .filteredOn(event -> "live-0".equals(event.segmentId()))
                 .extracting(SubtitleEvent::sourceText, SubtitleEvent::translationText)
                 .contains(org.assertj.core.groups.Tuple.tuple("", "translated first"));
     }
 
     @Test
-    void doesNotLetChineseCloudCompletionOverwriteLiveTranslateSourceText() throws Exception {
+    void ignoresChineseCloudTranscriptEchoes() throws Exception {
         FakeAsrProvider asr = new FakeAsrProvider();
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
@@ -159,6 +215,31 @@ class SimTransPipelineServiceTests {
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
                 .extracting(SubtitleEvent::sourceText, SubtitleEvent::translationText)
                 .contains(org.assertj.core.groups.Tuple.tuple("", chinese));
+    }
+
+    @Test
+    void ignoresChineseCloudTranscriptWhenItArrivesBeforeTranslation() throws Exception {
+        FakeAsrProvider asr = new FakeAsrProvider();
+        FakeTranslationProvider translation = new FakeTranslationProvider();
+        RecordingPublisher publisher = new RecordingPublisher();
+        SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
+        String chinese = "\u7b2c\u4e00\u53e5\u8bdd";
+
+        service.start();
+        asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", chinese, 1, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.TRANSLATION_RESULT, "translation-item", chinese, 2, "{}"));
+        Thread.sleep(100);
+
+        assertThat(publisher.events)
+                .filteredOn(event -> event.type() == SubtitleEventType.SOURCE_DELTA)
+                .extracting(SubtitleEvent::sourceText)
+                .doesNotContain(chinese);
+        assertThat(publisher.events)
+                .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
+                .extracting(SubtitleEvent::translationText)
+                .containsOnly(chinese);
     }
 
     @Test
@@ -214,6 +295,33 @@ class SimTransPipelineServiceTests {
                 .contains("");
     }
 
+    @Test
+    void clearsPreviousLiveTranslateTranslationWhenNextTranscriptStarts() throws Exception {
+        FakeAsrProvider asr = new FakeAsrProvider();
+        FakeTranslationProvider translation = new FakeTranslationProvider();
+        RecordingPublisher publisher = new RecordingPublisher();
+        SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
+
+        service.start();
+        asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", "first sentence", 1, "{}"));
+        asr.emit(new AsrEvent(
+                AsrEventType.TRANSLATION_RESULT,
+                "translation-item",
+                "translated first",
+                2,
+                "{\"type\":\"response.text.done\"}"
+        ));
+        asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "next-source-item", "second sentence", 3, "{}"));
+        Thread.sleep(100);
+
+        assertThat(publisher.events)
+                .filteredOn(event -> "second sentence".equals(event.sourceText()))
+                .extracting(SubtitleEvent::translationText)
+                .contains("");
+    }
+
     private RuntimeConfigService liveTranslateConfig(SimTransProperties properties) {
         RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
         runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
@@ -230,6 +338,7 @@ class SimTransPipelineServiceTests {
                 new SimTransProperties.Vad("energy", 250, 700, 8000, 0.5, 0.012, 0.25, true, 2000, "models/vad/silero/silero_vad.onnx"),
                 new SimTransProperties.LocalAsr("faster-whisper", "Systran/faster-whisper-large-v3", "models", "modelscope", "cuda", "float16", "py", 18765, Duration.ofSeconds(120), Duration.ofHours(2)),
                 new SimTransProperties.Translation("openai-compatible", "http://localhost:11434/v1", "", "model", "zh-CN", "", true, 0, 0.2, Duration.ofSeconds(45)),
+                new SimTransProperties.Correction(true, 4, 2, 0, 0.75, 2, Duration.ofSeconds(15)),
                 new SimTransProperties.Subtitle(2, true, 0.86, 28)
         );
     }
@@ -241,12 +350,24 @@ class SimTransPipelineServiceTests {
             RecordingPublisher publisher,
             RuntimeConfigService runtimeConfigService
     ) {
+        return service(properties, asr, translation, new FakeCorrectionReviewer(), publisher, runtimeConfigService);
+    }
+
+    private SimTransPipelineService service(
+            SimTransProperties properties,
+            FakeAsrProvider asr,
+            FakeTranslationProvider translation,
+            FakeCorrectionReviewer reviewer,
+            RecordingPublisher publisher,
+            RuntimeConfigService runtimeConfigService
+    ) {
         return new SimTransPipelineService(
                 properties,
                 new NoopCaptureProvider(),
                 new AudioFrameQueue(properties),
                 asr,
                 translation,
+                reviewer,
                 publisher,
                 runtimeConfigService
         );
@@ -285,6 +406,17 @@ class SimTransPipelineServiceTests {
             requests.add(request);
             deltaConsumer.accept(new TranslationDelta("fake translation", false));
             deltaConsumer.accept(new TranslationDelta("fake translation", true));
+        }
+    }
+
+    private static final class FakeCorrectionReviewer implements CorrectionReviewer {
+        private final List<CorrectionRequest> requests = new ArrayList<>();
+        private List<CorrectionResult> results = List.of();
+
+        @Override
+        public List<CorrectionResult> review(CorrectionRequest request) {
+            requests.add(request);
+            return results;
         }
     }
 

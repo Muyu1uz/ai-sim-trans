@@ -12,6 +12,7 @@ public record SimTransProperties(
         Vad vad,
         LocalAsr localAsr,
         Translation translation,
+        Correction correction,
         Subtitle subtitle
 ) {
     public record Audio(
@@ -76,6 +77,17 @@ public record SimTransProperties(
             boolean stream,
             int contextSegments,
             double temperature,
+            Duration timeout
+    ) {
+    }
+
+    public record Correction(
+            boolean enabled,
+            int reviewWindowSegments,
+            int minCompletedSegments,
+            int debounceMs,
+            double confidenceThreshold,
+            int maxCorrectionsPerSegment,
             Duration timeout
     ) {
     }
