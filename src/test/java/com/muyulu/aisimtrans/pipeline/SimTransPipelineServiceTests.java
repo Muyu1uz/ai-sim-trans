@@ -34,15 +34,7 @@ class SimTransPipelineServiceTests {
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen-asr-realtime");
         RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
 
         service.start();
         asr.emit(new AsrEvent(AsrEventType.PARTIAL, "s1", "hello", 1, "{}"));
@@ -75,29 +67,18 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
 
         service.start();
-        asr.emit(new AsrEvent(AsrEventType.TRANSLATION_RESULT, "s1", "娴ｇ姴銈芥稉鏍櫕", 1, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.TRANSLATION_RESULT, "s1", "translated text", 1, "{}"));
         Thread.sleep(100);
 
         assertThat(translation.requests).isEmpty();
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
                 .extracting(SubtitleEvent::translationText)
-                .contains("娴ｇ姴銈芥稉鏍櫕");
+                .contains("translated text");
     }
 
     @Test
@@ -106,19 +87,8 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
 
         service.start();
         asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "s2", "hello world", 1, "{}"));
@@ -150,19 +120,8 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
 
         service.start();
         asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "s1", "first sentence", 1, "{}"));
@@ -182,34 +141,24 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
+        String chinese = "\u7b2c\u4e00\u53e5\u8bdd";
 
         service.start();
         asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", "first sentence", 1, "{}"));
-        asr.emit(new AsrEvent(AsrEventType.TRANSLATION_RESULT, "translation-item", "第一句话", 2, "{}"));
-        asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", "第一句话", 3, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.TRANSLATION_RESULT, "translation-item", chinese, 2, "{}"));
+        asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", chinese, 3, "{}"));
         Thread.sleep(100);
 
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.SOURCE_DELTA)
                 .extracting(SubtitleEvent::sourceText)
-                .doesNotContain("第一句话");
+                .doesNotContain(chinese);
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_DELTA)
                 .extracting(SubtitleEvent::sourceText, SubtitleEvent::translationText)
-                .contains(org.assertj.core.groups.Tuple.tuple("", "第一句话"));
+                .contains(org.assertj.core.groups.Tuple.tuple("", chinese));
     }
 
     @Test
@@ -218,25 +167,15 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
+        String chinese = "\u7b2c\u4e00\u53e5\u8bdd";
 
         service.start();
         asr.emit(new AsrEvent(
                 AsrEventType.TRANSLATION_RESULT,
                 "translation-item",
-                "第一句话",
+                chinese,
                 2,
                 "{\"type\":\"response.text.done\"}"
         ));
@@ -245,7 +184,7 @@ class SimTransPipelineServiceTests {
         assertThat(publisher.events)
                 .filteredOn(event -> event.type() == SubtitleEventType.TRANSLATION_COMPLETED)
                 .extracting(SubtitleEvent::translationText)
-                .contains("第一句话");
+                .contains(chinese);
     }
 
     @Test
@@ -254,19 +193,8 @@ class SimTransPipelineServiceTests {
         FakeTranslationProvider translation = new FakeTranslationProvider();
         RecordingPublisher publisher = new RecordingPublisher();
         SimTransProperties properties = properties("qwen3.5-livetranslate-flash-realtime");
-        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
-        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
-                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
-        ));
-        SimTransPipelineService service = new SimTransPipelineService(
-                properties,
-                new NoopCaptureProvider(),
-                new AudioFrameQueue(properties),
-                asr,
-                translation,
-                publisher,
-                runtimeConfigService
-        );
+        RuntimeConfigService runtimeConfigService = liveTranslateConfig(properties);
+        SimTransPipelineService service = service(properties, asr, translation, publisher, runtimeConfigService);
 
         service.start();
         asr.emit(new AsrEvent(AsrEventType.TRANSCRIPT_RESULT, "source-item", "first sentence", 1, "{}"));
@@ -286,6 +214,14 @@ class SimTransPipelineServiceTests {
                 .contains("");
     }
 
+    private RuntimeConfigService liveTranslateConfig(SimTransProperties properties) {
+        RuntimeConfigService runtimeConfigService = new RuntimeConfigService(properties);
+        runtimeConfigService.update(new com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate(
+                "dashscope-livetranslate", null, null, null, null, null, null, null, null, null
+        ));
+        return runtimeConfigService;
+    }
+
     private SimTransProperties properties(String model) {
         return new SimTransProperties(
                 "local-asr",
@@ -295,6 +231,24 @@ class SimTransPipelineServiceTests {
                 new SimTransProperties.LocalAsr("faster-whisper", "Systran/faster-whisper-large-v3", "models", "modelscope", "cuda", "float16", "py", 18765, Duration.ofSeconds(120), Duration.ofHours(2)),
                 new SimTransProperties.Translation("openai-compatible", "http://localhost:11434/v1", "", "model", "zh-CN", true, 0, 0.2, Duration.ofSeconds(45)),
                 new SimTransProperties.Subtitle(2, true, 0.86, 28)
+        );
+    }
+
+    private SimTransPipelineService service(
+            SimTransProperties properties,
+            FakeAsrProvider asr,
+            FakeTranslationProvider translation,
+            RecordingPublisher publisher,
+            RuntimeConfigService runtimeConfigService
+    ) {
+        return new SimTransPipelineService(
+                properties,
+                new NoopCaptureProvider(),
+                new AudioFrameQueue(properties),
+                asr,
+                translation,
+                publisher,
+                runtimeConfigService
         );
     }
 
@@ -329,8 +283,8 @@ class SimTransPipelineServiceTests {
         @Override
         public void translate(TranslationRequest request, Consumer<TranslationDelta> deltaConsumer) {
             requests.add(request);
-            deltaConsumer.accept(new TranslationDelta("娴ｇ姴銈芥稉鏍櫕", false));
-            deltaConsumer.accept(new TranslationDelta("娴ｇ姴銈芥稉鏍櫕", true));
+            deltaConsumer.accept(new TranslationDelta("fake translation", false));
+            deltaConsumer.accept(new TranslationDelta("fake translation", true));
         }
     }
 
@@ -367,5 +321,3 @@ class SimTransPipelineServiceTests {
         }
     }
 }
-
-

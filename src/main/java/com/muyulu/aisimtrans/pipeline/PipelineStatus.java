@@ -8,6 +8,15 @@ public record PipelineStatus(
         long droppedAudioChunks,
         double lastAudioRms,
         long lastAudioAtMillis,
-        long audioCallbackCount
+        long audioCallbackCount,
+        long asrEventCount,
+        long speechStartedCount,
+        long finalTranscriptCount,
+        long translationSubmittedCount,
+        long translationCompletedCount,
+        String lastAsrEvent,
+        String lastAsrText,
+        String lastTranslationText,
+        String lastError
 ) {
 }
