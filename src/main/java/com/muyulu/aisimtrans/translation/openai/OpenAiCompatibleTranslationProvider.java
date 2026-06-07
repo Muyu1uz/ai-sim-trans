@@ -89,6 +89,11 @@ public class OpenAiCompatibleTranslationProvider implements TranslationProvider 
             prompt.append("This is an interim partial transcript; translate only the provided text and avoid adding unstated completion. ");
         }
         prompt.append("Return only the translated text.\n");
+        String customPrompt = runtimeConfigService.current().translationPrompt();
+        if (customPrompt != null && !customPrompt.isBlank()) {
+            prompt.append("User translation instructions:\n");
+            prompt.append(customPrompt.strip()).append('\n');
+        }
         if (!context.isEmpty()) {
             prompt.append("Recent context:\n");
             for (TranslationMemory.Entry entry : context) {

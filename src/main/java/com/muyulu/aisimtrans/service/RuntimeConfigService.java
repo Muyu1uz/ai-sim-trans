@@ -39,7 +39,8 @@ public class RuntimeConfigService {
                 valueOrDefault(properties.localAsr().computeType(), "float16"),
                 valueOrDefault(properties.translation().baseUrl(), "https://dashscope.aliyuncs.com/compatible-mode/v1"),
                 properties.translation().apiKey() == null ? "" : properties.translation().apiKey(),
-                valueOrDefault(properties.translation().model(), "qwen-turbo")
+                valueOrDefault(properties.translation().model(), "qwen-turbo"),
+                properties.translation().prompt() == null ? "" : properties.translation().prompt()
         ));
     }
 
@@ -59,7 +60,8 @@ public class RuntimeConfigService {
                 valueOrDefault(update.asrComputeType(), current.asrComputeType()),
                 valueOrDefault(update.translationBaseUrl(), current.translationBaseUrl()),
                 update.translationApiKey() == null ? current.translationApiKey() : update.translationApiKey(),
-                valueOrDefault(update.translationModel(), current.translationModel())
+                valueOrDefault(update.translationModel(), current.translationModel()),
+                update.translationPrompt() == null ? current.translationPrompt() : update.translationPrompt()
         );
         String modelId = valueOrDefault(update.asrModelId(), DEFAULT_MODELS.getOrDefault(next.asrEngine(), current.asrModelId()));
         next = new RuntimeConfig(
@@ -72,7 +74,8 @@ public class RuntimeConfigService {
                 next.asrComputeType(),
                 next.translationBaseUrl(),
                 next.translationApiKey(),
-                next.translationModel()
+                next.translationModel(),
+                next.translationPrompt()
         );
         if (!Objects.equals(current.asrEngine(), next.asrEngine()) || !Objects.equals(current.asrModelId(), next.asrModelId())) {
             modelStatus.set(ModelStatus.missing("model selection changed"));

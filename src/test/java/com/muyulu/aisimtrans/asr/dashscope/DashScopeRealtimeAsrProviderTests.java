@@ -60,16 +60,24 @@ class DashScopeRealtimeAsrProviderTests {
     }
 
     private DashScopeRealtimeAsrProvider provider(String language) {
-        SimTransProperties properties = new SimTransProperties(
+        SimTransProperties properties = properties(language);
+        return new DashScopeRealtimeAsrProvider(
+                properties,
+                objectMapper,
+                new DashScopeEventParser(objectMapper)
+        );
+    }
+
+    private SimTransProperties properties(String language) {
+        return new SimTransProperties(
                 "dashscope-livetranslate",
                 new SimTransProperties.Audio("windows-wasapi", null, 16000, 1, 512, 100, "LiveTranslateAudio"),
                 new SimTransProperties.Asr("dashscope", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime", "test-key", "qwen-asr-realtime", language, "server_vad", 500, 300, 0.5),
                 new SimTransProperties.Vad("energy", 250, 700, 8000, 0.5, 0.012, 0.25, true, 2000, "models/vad/silero/silero_vad.onnx"),
                 new SimTransProperties.LocalAsr("faster-whisper", "Systran/faster-whisper-large-v3", "models", "modelscope", "cuda", "float16", "py", 18765, Duration.ofSeconds(120), Duration.ofHours(2)),
-                new SimTransProperties.Translation("openai-compatible", "http://localhost:11434/v1", "", "model", "zh-CN", true, 0, 0.2, Duration.ofSeconds(45)),
+                new SimTransProperties.Translation("openai-compatible", "http://localhost:11434/v1", "", "model", "zh-CN", "", true, 0, 0.2, Duration.ofSeconds(45)),
                 new SimTransProperties.Subtitle(2, true, 0.86, 28)
         );
-        return new DashScopeRealtimeAsrProvider(properties, objectMapper, new DashScopeEventParser(objectMapper));
     }
 
     private Object invoke(Object target, String methodName) throws Exception {

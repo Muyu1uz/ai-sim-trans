@@ -58,6 +58,7 @@ simtrans:
     api-key: ${TRANSLATION_API_KEY:${DASHSCOPE_API_KEY:}}
     model: ${TRANSLATION_MODEL:qwen-turbo}
     target-language: zh-CN
+    prompt: ${TRANSLATION_PROMPT:}
     stream: true
     context-segments: 0
     temperature: 0.2

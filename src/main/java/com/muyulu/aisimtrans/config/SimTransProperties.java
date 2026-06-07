@@ -72,6 +72,7 @@ public record SimTransProperties(
             String apiKey,
             String model,
             String targetLanguage,
+            String prompt,
             boolean stream,
             int contextSegments,
             double temperature,

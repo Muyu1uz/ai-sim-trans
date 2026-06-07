@@ -10,6 +10,7 @@ public record RuntimeConfig(
         String asrComputeType,
         String translationBaseUrl,
         String translationApiKey,
-        String translationModel
+        String translationModel,
+        String translationPrompt
 ) {
 }
