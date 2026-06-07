@@ -13,6 +13,7 @@ const controls = {
   device: document.getElementById("deviceSelect"),
   translationModel: document.getElementById("translationModelInput"),
   translationBaseUrl: document.getElementById("translationBaseUrlInput"),
+  translationPrompt: document.getElementById("translationPromptInput"),
 };
 
 let defaultModels = {};
@@ -217,6 +218,7 @@ function applyRuntimeConfig(config) {
   controls.device.value = config.asrDevice;
   controls.translationModel.value = config.translationModel;
   controls.translationBaseUrl.value = config.translationBaseUrl;
+  controls.translationPrompt.value = config.translationPrompt || "";
   applyModeState();
 }
 
@@ -247,6 +249,7 @@ function runtimePayload() {
     asrDevice: controls.device.value,
     translationModel: controls.translationModel.value,
     translationBaseUrl: controls.translationBaseUrl.value,
+    translationPrompt: controls.translationPrompt.value,
   };
 }
 
@@ -259,7 +262,7 @@ function applyModeState() {
   const cloudMode = controls.mode.value === "dashscope-livetranslate";
   document.querySelectorAll("[data-local-only]").forEach(group => {
     group.classList.toggle("is-disabled", cloudMode);
-    group.querySelectorAll("input, select, button").forEach(element => {
+    group.querySelectorAll("input, select, textarea, button").forEach(element => {
       element.disabled = cloudMode;
     });
   });
