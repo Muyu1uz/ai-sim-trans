@@ -39,9 +39,18 @@ public class SimTransPipelineService {
     private final RuntimeConfigService runtimeConfigService;
     private final ExecutorService translationExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicLong asrEventCount = new AtomicLong();
+    private final AtomicLong speechStartedCount = new AtomicLong();
+    private final AtomicLong finalTranscriptCount = new AtomicLong();
+    private final AtomicLong translationSubmittedCount = new AtomicLong();
+    private final AtomicLong translationCompletedCount = new AtomicLong();
     private final Map<String, SegmentState> segments = new ConcurrentHashMap<>();
     private final SegmentState liveTranslateState = new SegmentState("live");
     private volatile boolean liveTranslationCompleted;
+    private volatile String lastAsrEvent = "";
+    private volatile String lastAsrText = "";
+    private volatile String lastTranslationText = "";
+    private volatile String lastError = "";
 
     public SimTransPipelineService(
             SimTransProperties properties,
@@ -63,24 +72,20 @@ public class SimTransPipelineService {
 
     public void start() {
         if (!running.compareAndSet(false, true)) {
-            log.info("流水线已在运行，忽略重复启动");
+            log.info("Pipeline is already running, ignoring duplicate start");
             return;
         }
         try {
-            log.info("开始启动流水线，模式={}", runtimeConfigService.current().mode());
+            log.info("Starting pipeline, mode={}", runtimeConfigService.current().mode());
             audioQueue.clear();
             audioQueue.resetStats();
             resetLiveTranslateState();
-            log.info("开始启动本地音频采集");
             audioCaptureProvider.start(audioQueue::offerLatest);
-            log.info("本地音频采集启动成功");
-            log.info("开始启动 ASR");
             asrProvider.start(audioQueue, this::handleAsrEvent);
-            log.info("ASR 启动成功");
             subtitlePublisher.publish(SubtitleEvent.status("pipeline started"));
-            log.info("流水线启动成功");
+            log.info("Pipeline started");
         } catch (RuntimeException ex) {
-            log.error("流水线启动失败：{}", ex.getMessage(), ex);
+            log.error("Pipeline start failed: {}", ex.getMessage(), ex);
             stop();
             subtitlePublisher.publish(SubtitleEvent.error(ex.getMessage()));
             throw ex;
@@ -89,16 +94,16 @@ public class SimTransPipelineService {
 
     public void stop() {
         if (!running.compareAndSet(true, false)) {
-            log.info("流水线未运行，忽略停止请求");
+            log.info("Pipeline is not running, ignoring stop");
             return;
         }
-        log.info("开始停止流水线");
+        log.info("Stopping pipeline");
         asrProvider.stop();
         audioCaptureProvider.stop();
         audioQueue.clear();
         resetLiveTranslateState();
         subtitlePublisher.publish(SubtitleEvent.status("pipeline stopped"));
-        log.info("流水线已停止");
+        log.info("Pipeline stopped");
     }
 
     public PipelineStatus status() {
@@ -110,17 +115,33 @@ public class SimTransPipelineService {
                 audioQueue.droppedChunks(),
                 audioCaptureProvider.lastRms(),
                 audioCaptureProvider.lastAudioAtMillis(),
-                audioCaptureProvider.audioCallbackCount()
+                audioCaptureProvider.audioCallbackCount(),
+                asrEventCount.get(),
+                speechStartedCount.get(),
+                finalTranscriptCount.get(),
+                translationSubmittedCount.get(),
+                translationCompletedCount.get(),
+                lastAsrEvent,
+                lastAsrText,
+                lastTranslationText,
+                lastError
         );
     }
 
     private void handleAsrEvent(AsrEvent event) {
+        asrEventCount.incrementAndGet();
+        lastAsrEvent = event.type().name();
+        if (event.text() != null && !event.text().isBlank()) {
+            lastAsrText = event.text();
+        }
         if (event.type() == AsrEventType.ERROR) {
-            log.error("收到 ASR 错误事件：{}", event.text());
+            log.error("Received ASR error event: {}", event.text());
+            lastError = event.text();
             subtitlePublisher.publish(SubtitleEvent.error(event.text()));
             return;
         }
         if (event.type() == AsrEventType.SPEECH_STARTED) {
+            speechStartedCount.incrementAndGet();
             SegmentState state = stateFor(event);
             subtitlePublisher.publish(new SubtitleEvent(
                     SubtitleEventType.CREATED,
@@ -140,18 +161,21 @@ public class SimTransPipelineService {
             return;
         }
         if (event.type() == AsrEventType.TRANSCRIPT_RESULT) {
-            log.info("收到转写结果，segmentId={}，文本长度={}", event.segmentId(), event.text().length());
+            log.info("Received transcript result, segmentId={}, textLength={}", event.segmentId(), event.text().length());
             publishTranscriptEvent(event);
             return;
         }
         if (event.type() == AsrEventType.TRANSLATION_RESULT) {
-            log.info("收到云端翻译结果，segmentId={}，文本长度={}", event.segmentId(), event.text().length());
+            log.info("Received cloud translation result, segmentId={}, textLength={}", event.segmentId(), event.text().length());
             publishTranslatedEvent(event);
             return;
         }
 
         SegmentState state = stateFor(event);
         state.sourceText = event.text();
+        if (event.type() == AsrEventType.FINAL) {
+            finalTranscriptCount.incrementAndGet();
+        }
         SubtitleEventType sourceType = event.type() == AsrEventType.CORRECTION
                 ? SubtitleEventType.CORRECTED
                 : SubtitleEventType.SOURCE_DELTA;
@@ -165,17 +189,15 @@ public class SimTransPipelineService {
                 null
         ));
 
-        if (isLiveTranslateModel()) {
-            return;
-        }
-        if (event.type() == AsrEventType.PARTIAL) {
+        if (isLiveTranslateModel() || event.type() == AsrEventType.PARTIAL) {
             return;
         }
         String translationSource = event.text();
         if (translationSource == null || translationSource.isBlank()) {
             return;
         }
-        log.info("开始提交翻译任务，segmentId={}，源文本长度={}", state.segmentId, translationSource.length());
+        log.info("Submitting translation, segmentId={}, sourceLength={}", state.segmentId, translationSource.length());
+        translationSubmittedCount.incrementAndGet();
         long version = state.nextTranslationVersion();
         translationExecutor.submit(() -> translateSegment(state.segmentId, translationSource, event.type(), true, version));
     }
@@ -241,9 +263,9 @@ public class SimTransPipelineService {
         StringBuilder translated = new StringBuilder();
         try {
             translationProvider.translate(request, delta -> handleTranslationDelta(state, sourceText, asrEventType, finalText, version, translated, delta));
-            log.info("翻译任务完成，segmentId={}，源文本长度={}", segmentId, sourceText.length());
+            log.info("Translation task completed, segmentId={}, sourceLength={}", segmentId, sourceText.length());
         } catch (RuntimeException ex) {
-            log.error("翻译任务失败，segmentId={}，错误={}", segmentId, ex.getMessage(), ex);
+            log.error("Translation task failed, segmentId={}, error={}", segmentId, ex.getMessage(), ex);
             subtitlePublisher.publish(SubtitleEvent.error("Translation failed: " + ex.getMessage()));
         }
     }
@@ -263,6 +285,8 @@ public class SimTransPipelineService {
         if (delta.done()) {
             String completed = delta.text().isBlank() ? translated.toString() : delta.text();
             state.translationText = completed;
+            translationCompletedCount.incrementAndGet();
+            lastTranslationText = completed;
             subtitlePublisher.publish(new SubtitleEvent(
                     finalText ? SubtitleEventType.TRANSLATION_COMPLETED : SubtitleEventType.TRANSLATION_DELTA,
                     state.segmentId,
@@ -367,24 +391,6 @@ public class SimTransPipelineService {
 
         private boolean isCurrentTranslation(long version) {
             return translationVersion.get() == version;
-        }
-
-        private String completedPrefixBeforeTrailingFragment(String text) {
-            String trimmed = text == null ? "" : text.trim();
-            int lastBoundary = -1;
-            for (int i = 0; i < trimmed.length(); i++) {
-                if (isSentenceBoundary(trimmed.charAt(i))
-                        && i < trimmed.length() - 1
-                        && !trimmed.substring(i + 1).trim().isBlank()) {
-                    lastBoundary = i;
-                }
-            }
-            return lastBoundary < 0 ? "" : trimmed.substring(0, lastBoundary + 1).trim();
-        }
-
-        private boolean isSentenceBoundary(char value) {
-            return value == '.' || value == '?' || value == '!'
-                    || value == '。' || value == '？' || value == '！';
         }
     }
 }
