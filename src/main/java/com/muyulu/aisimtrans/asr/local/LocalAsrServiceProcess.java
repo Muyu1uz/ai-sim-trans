@@ -29,6 +29,7 @@ import com.muyulu.aisimtrans.subtitle.SubtitleEventPublisher;
 public class LocalAsrServiceProcess {
     private static final Logger log = LoggerFactory.getLogger(LocalAsrServiceProcess.class);
     private static final String SERVICE_VERSION = "local-asr-service-v3";
+    private static final String PYTHON_VERSION_REQUIREMENT = "3.10, 3.11, or 3.12";
 
     private final SimTransProperties properties;
     private final RuntimeConfigService runtimeConfigService;
@@ -101,12 +102,15 @@ public class LocalAsrServiceProcess {
                 python = pythonExecutable();
             }
             if (!Files.exists(python)) {
-                log.info("\u5f00\u59cb\u521b\u5efa ASR Python \u865a\u62df\u73af\u5883\uff0c\u547d\u4ee4={}", String.join(" ", venvCreateCommand()));
-                run(venvCreateCommand(), Duration.ofMinutes(5));
+                createVirtualEnvironment();
                 python = pythonExecutable();
             }
             if (!Files.exists(python)) {
                 throw new IllegalStateException("Python virtual environment was created, but interpreter was not found at " + python);
+            }
+            if (!isSupportedPython(python)) {
+                throw new IllegalStateException("Local ASR requires Python " + PYTHON_VERSION_REQUIREMENT
+                        + ". Install one of these versions or set LOCAL_ASR_PYTHON to a compatible interpreter.");
             }
             log.info("\u5f00\u59cb\u5b89\u88c5\u6216\u5347\u7ea7 ASR Python \u6253\u5305\u5de5\u5177");
             run(List.of(python.toString(), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"), Duration.ofMinutes(10));
@@ -203,7 +207,7 @@ public class LocalAsrServiceProcess {
 
     private Path pythonExecutable() {
         Path scripts = Path.of(".venv-asr", "Scripts", "python.exe");
-        if (isWindows() || Files.exists(scripts)) {
+        if (Files.exists(scripts) || isWindows()) {
             return scripts;
         }
         return Path.of(".venv-asr", "bin", "python");
@@ -222,19 +226,40 @@ public class LocalAsrServiceProcess {
         return "anime-whisper".equals(runtimeConfigService.current().asrEngine());
     }
 
-    private List<String> venvCreateCommand() {
+    private void createVirtualEnvironment() throws IOException, InterruptedException {
+        List<List<String>> commands = venvCreateCommands();
+        RuntimeException lastFailure = null;
+        for (List<String> command : commands) {
+            try {
+                log.info("\u5f00\u59cb\u521b\u5efa ASR Python \u865a\u62df\u73af\u5883\uff0c\u547d\u4ee4={}", String.join(" ", command));
+                run(command, Duration.ofMinutes(5));
+                return;
+            } catch (RuntimeException ex) {
+                lastFailure = ex;
+                log.warn("ASR Python virtual environment creation command failed, trying next candidate: {}", ex.getMessage());
+            }
+        }
+        throw new IllegalStateException("Unable to create ASR Python virtual environment. Install Python "
+                + PYTHON_VERSION_REQUIREMENT + " or set LOCAL_ASR_PYTHON to a compatible interpreter.", lastFailure);
+    }
+
+    private List<List<String>> venvCreateCommands() {
         String python = properties.localAsr().python();
         if (isWindows() && "py".equalsIgnoreCase(python)) {
-            return List.of("py", "-3.13", "-m", "venv", ".venv-asr");
+            return List.of(
+                    List.of("py", "-3.12", "-m", "venv", ".venv-asr"),
+                    List.of("py", "-3.11", "-m", "venv", ".venv-asr"),
+                    List.of("py", "-3.10", "-m", "venv", ".venv-asr")
+            );
         }
-        return List.of(python, "-m", "venv", ".venv-asr");
+        return List.of(List.of(python, "-m", "venv", ".venv-asr"));
     }
 
     private boolean isSupportedPython(Path python) throws IOException, InterruptedException {
         ProcessBuilder builder = new ProcessBuilder(
                 python.toString(),
                 "-c",
-                "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+                "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] < (3, 13) else 1)"
         );
         Process versionProcess = builder.start();
         return versionProcess.waitFor(10, TimeUnit.SECONDS) && versionProcess.exitValue() == 0;

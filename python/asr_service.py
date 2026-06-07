@@ -3,7 +3,9 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import shutil
+import sys
 import wave
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -19,6 +21,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("local-asr")
 app = FastAPI()
 SERVICE_VERSION = "local-asr-service-v3"
+TEMP_CACHE_PREFIX = "._____temp"
+FUNASR_REQUIRED_FILES = (
+    "configuration.json",
+    "config.yaml",
+    "model.pt",
+    "chn_jpn_yue_eng_ko_spectok.bpe.model",
+    "am.mvn",
+)
 state = {
     "engine": None,
     "model_id": None,
@@ -26,6 +36,9 @@ state = {
     "device": "cpu",
     "compute_type": "int8",
     "model": None,
+    "transcribe_count": 0,
+    "nonempty_count": 0,
+    "last_text": "",
 }
 
 
@@ -37,6 +50,12 @@ async def health():
         "loaded": state["model"] is not None,
         "engine": state["engine"],
         "model_id": state["model_id"],
+        "python": sys.executable,
+        "prefix": sys.prefix,
+        "base_prefix": sys.base_prefix,
+        "transcribe_count": state["transcribe_count"],
+        "nonempty_count": state["nonempty_count"],
+        "last_text": state["last_text"],
     }
 
 
@@ -59,6 +78,7 @@ async def ensure_model(request: Request):
         if cache_ready(target, engine):
             logger.info("model cache hit target=%s", target)
             return {"status": "ready", "path": str(target)}
+        reset_incomplete_cache(target, engine)
         target.parent.mkdir(parents=True, exist_ok=True)
         source = payload.get("download_source", "modelscope")
         logger.info("model download start source=%s model_id=%s target=%s", source, model_id, target)
@@ -66,12 +86,27 @@ async def ensure_model(request: Request):
             try:
                 modelscope_download(model_id, cache_dir=str(target.parent), local_dir=str(target))
             except Exception as exc:
-                logger.warning("modelscope download failed, fallback to huggingface: %s", exc)
-                snapshot_download(model_id, local_dir=str(target), local_dir_use_symlinks=False)
+                cleanup_incomplete_cache(target)
+                if should_try_huggingface_fallback(model_id):
+                    logger.warning("modelscope download failed, fallback to huggingface: %s", exc)
+                    try:
+                        snapshot_download(model_id, local_dir=str(target), local_dir_use_symlinks=False)
+                    except Exception as fallback_exc:
+                        cleanup_incomplete_cache(target)
+                        raise RuntimeError(
+                            f"ModelScope download failed: {exc}; HuggingFace fallback failed: {fallback_exc}"
+                        ) from fallback_exc
+                else:
+                    raise RuntimeError(f"ModelScope download failed: {exc}") from exc
         else:
-            snapshot_download(model_id, local_dir=str(target), local_dir_use_symlinks=False)
+            try:
+                snapshot_download(model_id, local_dir=str(target), local_dir_use_symlinks=False)
+            except Exception as exc:
+                cleanup_incomplete_cache(target)
+                raise RuntimeError(f"HuggingFace download failed: {exc}") from exc
+        cleanup_incomplete_cache(target)
         if not cache_ready(target, engine):
-            raise RuntimeError(f"Model cache is incomplete after download: {target}")
+            raise RuntimeError(f"Model cache is incomplete after download: {target}. {cache_status(target, engine)}")
         logger.info("model download ready target=%s", target)
         return {"status": "ready", "path": str(target)}
     except Exception as exc:
@@ -94,7 +129,12 @@ async def load_model(request: Request):
         )
         if not cache_ready(Path(model_path_value), engine):
             raise RuntimeError(f"Model cache is incomplete: {model_path_value}")
-        model = load_engine(engine, model_path_value, payload.get("device", "cpu"), payload.get("compute_type", "int8"))
+        model, actual_compute_type = load_engine(
+            engine,
+            model_path_value,
+            payload.get("device", "cpu"),
+            payload.get("compute_type", "int8"),
+        )
     except Exception as exc:
         logger.exception("load model failed")
         return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
@@ -103,7 +143,7 @@ async def load_model(request: Request):
         "model_id": payload["model_id"],
         "model_path": model_path_value,
         "device": payload.get("device", "cpu"),
-        "compute_type": payload.get("compute_type", "int8"),
+        "compute_type": actual_compute_type,
         "model": model,
     })
     logger.info("load model ready engine=%s model_id=%s", engine, payload["model_id"])
@@ -143,19 +183,58 @@ def model_path(models_dir: Path, engine: str, model_id: str) -> Path:
 def cache_ready(path: Path, engine: str) -> bool:
     if not path.is_dir():
         return False
-    if any(part.name.startswith("._____temp") for part in path.rglob("*")):
+    if has_incomplete_cache(path):
         return False
     if engine == "faster-whisper":
         return (path / "model.bin").is_file()
+    if engine == "sensevoice":
+        return all((path / name).is_file() for name in FUNASR_REQUIRED_FILES)
     return any(item.is_file() for item in path.rglob("*") if not item.name.startswith("."))
 
 
 def cleanup_incomplete_cache(path: Path) -> None:
     if not path.exists():
         return
-    for temp_dir in path.rglob("._____temp"):
+    for temp_dir in sorted(
+        (item for item in path.rglob("*") if item.name.startswith(TEMP_CACHE_PREFIX)),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
         logger.info("remove incomplete model temp dir=%s", temp_dir)
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir.is_dir():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            temp_dir.unlink(missing_ok=True)
+
+
+def reset_incomplete_cache(path: Path, engine: str) -> None:
+    if not path.exists() or cache_ready(path, engine):
+        return
+    logger.info("remove incomplete model cache dir=%s", path)
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def has_incomplete_cache(path: Path) -> bool:
+    return any(item.name.startswith(TEMP_CACHE_PREFIX) for item in path.rglob("*"))
+
+
+def cache_status(path: Path, engine: str) -> str:
+    if not path.exists():
+        return "cache directory does not exist"
+    if not path.is_dir():
+        return "cache path is not a directory"
+    if has_incomplete_cache(path):
+        return f"cache still contains {TEMP_CACHE_PREFIX} temporary files"
+    if engine == "faster-whisper":
+        return "missing model.bin"
+    if engine == "sensevoice":
+        missing = [name for name in FUNASR_REQUIRED_FILES if not (path / name).is_file()]
+        return "missing required FunASR files: " + ", ".join(missing)
+    return "no model files found"
+
+
+def should_try_huggingface_fallback(model_id: str) -> bool:
+    return not model_id.startswith("iic/")
 
 
 async def read_json_payload(request: Request) -> dict:
@@ -170,22 +249,51 @@ async def read_json_payload(request: Request) -> dict:
 
 def load_engine(engine: str, model_path_value: str, device: str, compute_type: str):
     if engine == "faster-whisper":
-        from faster_whisper import WhisperModel
-        return WhisperModel(model_path_value, device=device, compute_type=compute_type)
+        return load_faster_whisper(model_path_value, device, compute_type)
     if engine == "anime-whisper":
-        return AnimeWhisperModel(model_path_value, device)
+        return AnimeWhisperModel(model_path_value, device), compute_type
     if engine in ("sensevoice", "funasr-nano"):
         try:
             from funasr import AutoModel
         except Exception as exc:
             raise RuntimeError("Install funasr in python/requirements.txt to use this engine") from exc
-        return AutoModel(model=model_path_value, device=device)
+        return AutoModel(model=model_path_value, device=device), compute_type
     raise RuntimeError(f"Unsupported ASR engine: {engine}")
+
+
+def load_faster_whisper(model_path_value: str, device: str, compute_type: str):
+    from faster_whisper import WhisperModel
+
+    errors = []
+    for candidate in compute_type_candidates(compute_type):
+        try:
+            logger.info("load faster-whisper with device=%s compute_type=%s", device, candidate)
+            model = WhisperModel(model_path_value, device=device, compute_type=candidate)
+            if candidate != compute_type:
+                logger.warning("fallback faster-whisper compute_type from %s to %s", compute_type, candidate)
+            return model, candidate
+        except Exception as exc:
+            errors.append(f"{candidate}: {exc}")
+            if not is_compute_type_error(exc):
+                break
+            logger.warning("faster-whisper compute_type=%s is not supported: %s", candidate, exc)
+    raise RuntimeError("Unable to load faster-whisper model. Tried " + "; ".join(errors))
+
+
+def compute_type_candidates(compute_type: str) -> list[str]:
+    candidates = [compute_type or "auto", "auto", "int8", "float32"]
+    return list(dict.fromkeys(candidates))
+
+
+def is_compute_type_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "compute type" in message or "float16" in message or "unsupported" in message
 
 
 def transcribe_audio(pcm16le: bytes, sample_rate: int, channels: int) -> str:
     if state["model"] is None:
         raise RuntimeError("ASR model is not loaded")
+    state["transcribe_count"] += 1
     audio = pcm16_to_float_mono(pcm16le, channels)
     if is_low_energy(audio):
         logger.info("skip low-energy audio bytes=%s", len(pcm16le))
@@ -203,12 +311,41 @@ def transcribe_audio(pcm16le: bytes, sample_rate: int, channels: int) -> str:
             wav.setsampwidth(2)
             wav.setframerate(sample_rate)
             wav.writeframes(pcm16le)
-        result = state["model"].generate(input=str(wav_path))
+        result = generate_transcript(str(wav_path))
         if isinstance(result, list) and result:
-            return str(result[0].get("text", "")).strip()
-        return str(result).strip()
+            text = postprocess_transcript(str(result[0].get("text", "")))
+        else:
+            text = postprocess_transcript(str(result))
+        state["last_text"] = text
+        if text:
+            state["nonempty_count"] += 1
+        return text
     finally:
         wav_path.unlink(missing_ok=True)
+
+
+def generate_transcript(wav_path: str):
+    if state["engine"] == "sensevoice":
+        return state["model"].generate(
+            input=wav_path,
+            cache={},
+            language="auto",
+            use_itn=True,
+            batch_size_s=60,
+        )
+    return state["model"].generate(input=wav_path)
+
+
+def postprocess_transcript(text: str) -> str:
+    if state["engine"] == "sensevoice":
+        try:
+            from funasr.utils.postprocess_utils import rich_transcription_postprocess
+            text = rich_transcription_postprocess(text)
+        except Exception as exc:
+            logger.warning("SenseVoice rich postprocess failed: %s", exc)
+    text = re.sub(r"<\|[^|]+?\|>", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def pcm16_to_float_mono(pcm16le: bytes, channels: int):
