@@ -111,6 +111,7 @@ public class LocalAsrProvider implements AsrProvider {
     private void processAudio(AudioFrameQueue audioQueue, VadDetector vad, Consumer<AsrEvent> eventConsumer) {
         ByteArrayOutputStream segment = new ByteArrayOutputStream();
         int speechMs = 0;
+        int segmentMs = 0;
         int silenceMs = 0;
         int lastInterimMs = 0;
         String segmentId = UUID.randomUUID().toString();
@@ -129,31 +130,56 @@ public class LocalAsrProvider implements AsrProvider {
                             inSpeech = true;
                             segmentId = UUID.randomUUID().toString();
                             speechMs = 0;
+                            segmentMs = 0;
                             silenceMs = 0;
                             lastInterimMs = 0;
                             eventConsumer.accept(new AsrEvent(AsrEventType.SPEECH_STARTED, segmentId, "", System.currentTimeMillis(), null));
                         }
                         speechMs += chunkMs;
+                        segmentMs += chunkMs;
                         silenceMs = 0;
                         segment.write(chunk.pcm16le());
                         if (shouldTranscribeInterim(speechMs, lastInterimMs, segment.size())) {
                             lastInterimMs = speechMs;
                             transcribeInterim(segmentId, interimWindow(segment.toByteArray()), eventConsumer);
                         }
-                        if (properties.vad().maxSpeechMs() > 0 && speechMs >= properties.vad().maxSpeechMs()) {
+                        if (properties.vad().maxSpeechMs() > 0 && segmentMs >= properties.vad().maxSpeechMs()) {
                             finishSegment(segmentId, segment, eventConsumer);
                             inSpeech = false;
+                            segmentMs = 0;
                         }
                         continue;
                     }
                     if (inSpeech) {
+                        segmentMs += chunkMs;
+                        if (properties.vad().maxSpeechMs() > 0 && segmentMs >= properties.vad().maxSpeechMs()) {
+                            finishSegment(segmentId, segment, eventConsumer);
+                            inSpeech = false;
+                            speechMs = 0;
+                            segmentMs = 0;
+                            silenceMs = 0;
+                            continue;
+                        }
                         silenceMs += chunkMs;
                         if (silenceMs <= SILENCE_PADDING_MS) {
                             segment.write(chunk.pcm16le());
                         }
+                        if (speechMs < properties.vad().minSpeechMs() && silenceMs >= silenceThresholdMs(speechMs)) {
+                            log.info("Dropping short local ASR segment, segmentId={}, speechMs={}, silenceMs={}",
+                                    segmentId, speechMs, silenceMs);
+                            segment.reset();
+                            inSpeech = false;
+                            speechMs = 0;
+                            segmentMs = 0;
+                            silenceMs = 0;
+                            continue;
+                        }
                         if (speechMs >= properties.vad().minSpeechMs() && silenceMs >= silenceThresholdMs(speechMs)) {
                             finishSegment(segmentId, segment, eventConsumer);
                             inSpeech = false;
+                            speechMs = 0;
+                            segmentMs = 0;
+                            silenceMs = 0;
                         }
                     }
                 } catch (InterruptedException ex) {
