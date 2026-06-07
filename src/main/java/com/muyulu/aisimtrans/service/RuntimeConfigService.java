@@ -5,13 +5,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.springframework.stereotype.Service;
-
-import com.muyulu.aisimtrans.config.SimTransProperties;
 import com.muyulu.aisimtrans.runtime.ModelStatus;
 import com.muyulu.aisimtrans.runtime.RuntimeConfig;
 import com.muyulu.aisimtrans.runtime.RuntimeConfigUpdate;
 import com.muyulu.aisimtrans.runtime.RuntimeOptions;
+import org.springframework.stereotype.Service;
+
+import com.muyulu.aisimtrans.config.SimTransProperties;
 
 @Service
 public class RuntimeConfigService {
@@ -32,11 +32,11 @@ public class RuntimeConfigService {
         this.config = new AtomicReference<>(new RuntimeConfig(
                 valueOrDefault(properties.mode(), MODE_LOCAL_ASR),
                 properties.audio().deviceName() == null ? "" : properties.audio().deviceName(),
-                valueOrDefault(properties.vad().provider(), "silero"),
-                valueOrDefault(properties.localAsr().engine(), "faster-whisper"),
-                valueOrDefault(properties.localAsr().modelId(), DEFAULT_MODELS.get("faster-whisper")),
-                valueOrDefault(properties.localAsr().device(), "cpu"),
-                valueOrDefault(properties.localAsr().computeType(), "int8"),
+                normalizeVad(valueOrDefault(properties.vad().provider(), "energy")),
+                valueOrDefault(properties.localAsr().engine(), "sensevoice"),
+                valueOrDefault(properties.localAsr().modelId(), DEFAULT_MODELS.get("sensevoice")),
+                valueOrDefault(properties.localAsr().device(), "cuda"),
+                valueOrDefault(properties.localAsr().computeType(), "float16"),
                 valueOrDefault(properties.translation().baseUrl(), "https://dashscope.aliyuncs.com/compatible-mode/v1"),
                 properties.translation().apiKey() == null ? "" : properties.translation().apiKey(),
                 valueOrDefault(properties.translation().model(), "qwen-turbo")
@@ -88,7 +88,7 @@ public class RuntimeConfigService {
                 status.status(),
                 status.message(),
                 List.of(MODE_LOCAL_ASR, MODE_DASHSCOPE_LIVETRANSLATE),
-                List.of("silero", "energy", "disabled"),
+                List.of("energy", "disabled"),
                 List.of("faster-whisper", "sensevoice", "funasr-nano", "anime-whisper"),
                 DEFAULT_MODELS
         );
@@ -105,7 +105,7 @@ public class RuntimeConfigService {
     private String normalizeVad(String provider) {
         return switch (provider) {
             case "energy", "disabled" -> provider;
-            default -> "silero";
+            default -> "energy";
         };
     }
 

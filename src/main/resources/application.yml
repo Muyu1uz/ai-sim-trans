@@ -14,7 +14,7 @@ simtrans:
     sample-rate: 16000
     channels: 1
     chunk-samples: 512
-    queue-capacity: 100
+    queue-capacity: 16
     native-library: LiveTranslateAudio
 
   asr:
@@ -29,24 +29,24 @@ simtrans:
     threshold: 0.5
 
   vad:
-    provider: ${VAD_PROVIDER:silero}
-    min-speech-ms: 1000
-    min-silence-ms: 400
-    max-speech-ms: 8000
-    threshold: 0.5
-    energy-threshold: 0.006
+    provider: ${VAD_PROVIDER:energy}
+    min-speech-ms: 320
+    min-silence-ms: 500
+    max-speech-ms: 5000
+    threshold: 0.3
+    energy-threshold: 0.003
     speech-density-threshold: 0.25
     incremental-asr: true
-    interim-interval-ms: 1000
+    interim-interval-ms: 1200
     silero-model: models/vad/silero/silero_vad.onnx
 
   local-asr:
-    engine: ${LOCAL_ASR_ENGINE:faster-whisper}
-    model-id: ${LOCAL_ASR_MODEL:Systran/faster-whisper-small}
+    engine: ${LOCAL_ASR_ENGINE:sensevoice}
+    model-id: ${LOCAL_ASR_MODEL:iic/SenseVoiceSmall}
     models-dir: ${LOCAL_ASR_MODELS_DIR:models}
     download-source: ${LOCAL_ASR_DOWNLOAD_SOURCE:modelscope}
-    device: ${LOCAL_ASR_DEVICE:cpu}
-    compute-type: ${LOCAL_ASR_COMPUTE_TYPE:int8}
+    device: ${LOCAL_ASR_DEVICE:cuda}
+    compute-type: ${LOCAL_ASR_COMPUTE_TYPE:float16}
     python: ${LOCAL_ASR_PYTHON:py}
     service-port: ${LOCAL_ASR_SERVICE_PORT:18765}
     startup-timeout: 120s
