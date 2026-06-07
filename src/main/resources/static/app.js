@@ -211,6 +211,9 @@ function applyRuntimeConfig(config) {
   controls.asrEngine.value = config.asrEngine;
   controls.asrModel.value = config.asrModelId;
   controls.vad.value = config.vadProvider;
+  if (!controls.vad.value && controls.vad.options.length > 0) {
+    controls.vad.value = controls.vad.options[0].value;
+  }
   controls.device.value = config.asrDevice;
   controls.translationModel.value = config.translationModel;
   controls.translationBaseUrl.value = config.translationBaseUrl;
@@ -240,7 +243,7 @@ function runtimePayload() {
     audioDeviceName: controls.audioDevice.value,
     asrEngine: controls.asrEngine.value,
     asrModelId: controls.asrModel.value,
-    vadProvider: controls.vad.value,
+    vadProvider: controls.vad.value || "energy",
     asrDevice: controls.device.value,
     translationModel: controls.translationModel.value,
     translationBaseUrl: controls.translationBaseUrl.value,
