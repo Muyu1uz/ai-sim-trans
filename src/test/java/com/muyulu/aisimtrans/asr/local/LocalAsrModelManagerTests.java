@@ -44,6 +44,37 @@ class LocalAsrModelManagerTests {
         assertThat(ready).isTrue();
     }
 
+    @Test
+    void treatsSenseVoiceCacheWithRequiredFilesAsReady() throws Exception {
+        Path modelPath = tempDir.resolve("sensevoice");
+        Files.createDirectories(modelPath);
+        Files.writeString(modelPath.resolve("configuration.json"), "{}");
+        Files.writeString(modelPath.resolve("config.yaml"), "config");
+        Files.writeString(modelPath.resolve("model.pt"), "model");
+        Files.writeString(modelPath.resolve("chn_jpn_yue_eng_ko_spectok.bpe.model"), "tokenizer");
+        Files.writeString(modelPath.resolve("am.mvn"), "mvn");
+
+        LocalAsrModelManager manager = new LocalAsrModelManager(properties(), null, null, new ObjectMapper());
+
+        boolean ready = cacheReady(manager, modelPath, "sensevoice");
+
+        assertThat(ready).isTrue();
+    }
+
+    @Test
+    void treatsPartialSenseVoiceCacheAsNotReady() throws Exception {
+        Path modelPath = tempDir.resolve("sensevoice-partial");
+        Files.createDirectories(modelPath);
+        Files.writeString(modelPath.resolve("configuration.json"), "{}");
+        Files.writeString(modelPath.resolve("model.pt"), "model");
+
+        LocalAsrModelManager manager = new LocalAsrModelManager(properties(), null, null, new ObjectMapper());
+
+        boolean ready = cacheReady(manager, modelPath, "sensevoice");
+
+        assertThat(ready).isFalse();
+    }
+
     private SimTransProperties properties() {
         return new SimTransProperties(
                 "local-asr",

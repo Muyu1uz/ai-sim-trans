@@ -25,6 +25,14 @@ import com.muyulu.aisimtrans.service.RuntimeConfigService;
 @Service
 public class LocalAsrModelManager {
     private static final Logger log = LoggerFactory.getLogger(LocalAsrModelManager.class);
+    private static final String TEMP_CACHE_PREFIX = "._____temp";
+    private static final String[] FUNASR_REQUIRED_FILES = {
+            "configuration.json",
+            "config.yaml",
+            "model.pt",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+            "am.mvn"
+    };
 
     private final SimTransProperties properties;
     private final RuntimeConfigService runtimeConfigService;
@@ -156,13 +164,21 @@ public class LocalAsrModelManager {
         }
         cleanupIncompleteCache(path);
         try (var stream = Files.walk(path)) {
-            boolean hasTemp = stream.anyMatch(item -> item.getFileName().toString().startsWith("._____temp"));
+            boolean hasTemp = stream.anyMatch(item -> item.getFileName().toString().startsWith(TEMP_CACHE_PREFIX));
             if (hasTemp) {
                 return false;
             }
         }
         if ("faster-whisper".equals(engine)) {
             return Files.isRegularFile(path.resolve("model.bin"));
+        }
+        if ("sensevoice".equals(engine)) {
+            for (String requiredFile : FUNASR_REQUIRED_FILES) {
+                if (!Files.isRegularFile(path.resolve(requiredFile))) {
+                    return false;
+                }
+            }
+            return true;
         }
         try (var stream = Files.walk(path)) {
             return stream.anyMatch(item -> Files.isRegularFile(item) && !item.getFileName().toString().startsWith("."));
@@ -172,7 +188,7 @@ public class LocalAsrModelManager {
     private void cleanupIncompleteCache(Path path) throws IOException {
         try (var stream = Files.walk(path)) {
             var tempDirs = stream
-                    .filter(item -> item.getFileName().toString().startsWith("._____temp"))
+                    .filter(item -> item.getFileName().toString().startsWith(TEMP_CACHE_PREFIX))
                     .sorted(Comparator.reverseOrder())
                     .toList();
             for (Path tempDir : tempDirs) {

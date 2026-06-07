@@ -23,14 +23,18 @@ class LocalAsrServiceProcessTests {
     }
 
     @Test
-    void usesPyLauncherForWindowsVenvCreation() throws Exception {
+    void usesCompatiblePyLaunchersForWindowsVenvCreation() throws Exception {
         SimTransProperties properties = properties();
         LocalAsrServiceProcess process = new LocalAsrServiceProcess(properties, new RuntimeConfigService(properties), event -> {
         });
 
-        Object command = invoke(process, "venvCreateCommand");
+        Object commands = invoke(process, "venvCreateCommands");
 
-        assertThat(command).asList().containsExactly("py", "-3.13", "-m", "venv", ".venv-asr");
+        assertThat(commands).asList().containsExactly(
+                java.util.List.of("py", "-3.12", "-m", "venv", ".venv-asr"),
+                java.util.List.of("py", "-3.11", "-m", "venv", ".venv-asr"),
+                java.util.List.of("py", "-3.10", "-m", "venv", ".venv-asr")
+        );
     }
 
     private SimTransProperties properties() {
